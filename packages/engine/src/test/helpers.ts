@@ -145,7 +145,7 @@ export class Driver {
     return applyAction(this.state, a);
   }
   /** いま待たれている人が手を出す。 */
-  play(seat: SeatId, shorts: string, extra: { shape?: 'group' | 'run'; confirmFoul?: boolean } = {}) {
+  play(seat: SeatId, shorts: string, extra: { shape?: 'group' | 'run'; confirmFoul?: boolean; withSkip?: boolean } = {}) {
     const w = this.current();
     expect(w.seat, `expected seat ${seat} to be awaited`).toBe(seat);
     return this.apply({ type: 'play', seat, awaitId: w.id, cards: cs(shorts), ...extra });
@@ -167,6 +167,20 @@ export class Driver {
     expect(w.seat).toBe(seat);
     expect(w.kind).toBe('choice');
     return this.apply({ type: 'choose', seat, awaitId: w.id, cards: cs(shorts) });
+  }
+  /** いま待たれている人が特権を使う（その3）。 */
+  use(seat: SeatId, ability: AbilityId, extra: { target?: SeatId; card?: string; rank?: number } = {}) {
+    const w = this.current();
+    expect(w.seat).toBe(seat);
+    const a: Action = { type: 'useAbility', seat, awaitId: w.id, ability };
+    if (extra.target !== undefined) a.target = extra.target;
+    if (extra.card !== undefined) a.card = c(extra.card);
+    if (extra.rank !== undefined) a.rank = extra.rank as never;
+    return this.apply(a);
+  }
+  /** いま待たれている人が auto で進める。 */
+  auto(policy: 'cpu' | 'timeout' = 'cpu') {
+    return this.apply({ type: 'auto', awaitId: this.current().id, policy });
   }
   places() {
     return viewFor(this.state, 0).game?.places;

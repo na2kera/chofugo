@@ -9,6 +9,8 @@ import {
   applyAction,
   awaiting,
   createMatch,
+  eventsFor,
+  legalPlays,
   viewFor,
   type Action,
   type GameEvent,
@@ -104,4 +106,44 @@ describe('自動対戦（超富豪モード：特権あり・16種すべて ON�
     for (const k of ['abilitySelect', 'turn', 'exchangeGive', 'respond', 'choice']) expect(seen.kinds, k).toContain(k);
     for (const m of ['continues', 'slots:1', 'slots:2', 'flush:forceFlush']) expect(seen.marks, m).toContain(m);
   });
+});
+
+function deepFreeze<T>(v: T): T {
+  if (v !== null && typeof v === 'object' && !Object.isFrozen(v)) {
+    Object.freeze(v);
+    for (const x of Object.values(v as object)) deepFreeze(x);
+  }
+  return v;
+}
+
+describe('超富豪モードの JSON 往復と、入力の状態を変えないこと', () => {
+  it('毎手で JSON 往復した状態に同じ操作を適用すると結果が同じ。凍結した状態でも viewFor などが落ちない', () => {
+    const rng = rngFromSeed([4, 4, 2, 2]);
+    for (let m = 0; m < 6; m++) {
+      const created = createMatch(CHOFUGO, [m + 61, 3, 1, 4]);
+      if (!created.ok) throw new Error();
+      let s: MatchState = deepFreeze(created.state);
+      let steps = 0;
+      while (s.phase !== 'matchResult' && steps++ < 8000) {
+        for (const seat of [0, 1, 2, 3] as const) {
+          viewFor(s, seat);
+          legalPlays(s, seat);
+        }
+        const round = JSON.parse(JSON.stringify(s)) as MatchState;
+        expect(round).toStrictEqual(s);
+        let a: Action;
+        if (s.phase === 'gameResult') a = { type: 'nextGame' };
+        else if (nextInt(rng, 2) === 0) a = randomAction(s, rng);
+        else a = { type: 'auto', awaitId: awaiting(s)[0]!.id, policy: nextInt(rng, 2) ? 'cpu' : 'timeout' };
+        const r1 = applyAction(s, a);
+        const r2 = applyAction(round, a);
+        expect(r2).toStrictEqual(r1);
+        if (!r1.ok) throw new Error(r1.error.message);
+        const events = deepFreeze(r1.events);
+        for (const seat of [0, 1, 2, 3] as const) eventsFor(events, seat);
+        s = deepFreeze(r1.state);
+      }
+      expect(s.phase).toBe('matchResult');
+    }
+  }, 60_000);
 });

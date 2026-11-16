@@ -33,6 +33,12 @@ function learn(known: Set<string>, events: readonly GameEvent[], viewer: SeatId)
     if (e.type === 'play' || e.type === 'respond') e.play.cards.forEach((x) => known.add(x));
     if (e.type === 'discard') e.cards.forEach((x) => known.add(x));
     if (e.type === 'dethrone') e.discarded.forEach((x) => known.add(x));
+    // その3: 透視で見た・見られたカード、強奪で動いたカード（当事者にだけ中身が届く）
+    if (e.type === 'ability') {
+      e.cards?.forEach((x) => known.add(x));
+      if (e.given !== undefined) known.add(e.given);
+      if (e.taken !== undefined) known.add(e.taken);
+    }
   }
 }
 
@@ -182,6 +188,84 @@ describe('見える情報', () => {
     const deal = ev.find((e) => e.type === 'deal');
     expect(deal).toMatchObject({ hand: s.state.game!.hands[2] });
     expect(JSON.stringify(ev)).not.toContain(`"${s.state.game!.hands[0]![0]}"`);
+  });
+});
+
+describe('見える情報（超富豪モード：特権あり、design-3 §2.8）', () => {
+  it('非公開の手札を入れ替えても、その席から見える状態・出せる手・出来事は変わらない（特権の選択・使用を含む）', () => {
+    const rng = rngFromSeed([7, 3, 5, 9]);
+    let checked = 0;
+    let abilityChecked = 0;
+    for (let m = 0; m < 24; m++) {
+      const created = createMatch({ matchId: 'v3', rules: [...ALL_RULE_IDS], gameCount: 5, abilities: true }, [m + 101, 9, 2, 6]);
+      if (!created.ok) throw new Error(created.error.message);
+      let s = created.state;
+      const known = SEATS.map(() => new Set<string>());
+      const learnAll = (events: readonly GameEvent[]) => SEATS.forEach((v) => learn(known[v]!, events, v));
+      learnAll(created.events);
+      let steps = 0;
+      while (s.phase !== 'matchResult' && steps < 6000) {
+        steps++;
+        if (s.phase === 'gameResult') {
+          const r = applyAction(s, { type: 'nextGame' });
+          if (!r.ok) throw new Error();
+          s = r.state;
+          known.forEach((k) => k.clear());
+          learnAll(r.events);
+          continue;
+        }
+        if ((s.phase === 'play' || s.phase === 'ability') && nextInt(rng, 3) === 0) {
+          const viewer = SEATS[nextInt(rng, 4)]!;
+          const t = swapHidden(s, viewer, rng, known[viewer]!);
+          if (t !== null) {
+            sameForViewer(s, t, viewer);
+            const a = viewerAction(s, viewer, rng);
+            if (a !== null) {
+              const ra = applyAction(s, a);
+              const rb = applyAction(t, a);
+              expect(rb.ok).toBe(ra.ok);
+              if (ra.ok && ra.events.some((e) => e.type === 'ability' || e.type === 'abilitiesChosen')) abilityChecked++;
+              // 都落ちの公開と、自分が使った透視・強奪（隠れた手札から乱数で引くので、中身は手札によって変わる）のあとは比べない
+              const revealed =
+                ra.ok &&
+                ra.events.some((e) => e.type === 'dethrone' || (e.type === 'ability' && (e.ability === 'peek' || e.ability === 'steal')));
+              if (ra.ok && rb.ok && !revealed) {
+                expect(eventsFor(rb.events, viewer)).toStrictEqual(eventsFor(ra.events, viewer));
+                sameForViewer(ra.state, rb.state, viewer);
+                expect(awaiting(rb.state)).toStrictEqual(awaiting(ra.state));
+              }
+            }
+            checked++;
+          }
+        }
+        const r = applyAction(s, randomAction(s, rng));
+        if (!r.ok) throw new Error(r.error.message);
+        s = r.state;
+        learnAll(r.events);
+      }
+    }
+    expect(checked).toBeGreaterThan(300);
+    expect(abilityChecked).toBeGreaterThan(0);
+  }, 60_000);
+
+  it('他人の特権の使用（透視・強奪）のあとも、第三者から見える状態は手札の入れ替えで変わらない', () => {
+    // 席0が席1に強奪を使い、席2から見る。席1と席3の、席2の知らないカードを入れ替えても、席2の view と出来事は同じ
+    const mk = (h1: string, h3: string) =>
+      scene({ rules: [], hands: ['S5 S6', h1, 'D3 D4', h3], turn: 0, abilities: { holder: 0, chosen: ['peek', 'steal'] } });
+    const a = mk('H7 H8', 'C9 C10');
+    const b = mk('H7 C10', 'C9 H8');
+    for (const act of [
+      { type: 'useAbility', seat: 0, awaitId: 100, ability: 'steal', target: 1, card: 'spade-6' },
+      { type: 'useAbility', seat: 0, awaitId: 100, ability: 'peek', target: 1 },
+    ] as Action[]) {
+      const ra = applyAction(a, act);
+      const rb = applyAction(b, act);
+      if (!ra.ok || !rb.ok) throw new Error();
+      for (const v of [2, 3] as SeatId[]) {
+        expect(eventsFor(rb.events, v)).toStrictEqual(eventsFor(ra.events, v));
+        if (v === 2) sameForViewer(ra.state, rb.state, v);
+      }
+    }
   });
 });
 
