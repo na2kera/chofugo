@@ -1,7 +1,8 @@
 // つなぎ直したときの持ち時間（decisions §18.1）。
 // 猶予の中での復帰は期限を変えない（残りが短ければ1つの待ちにつき1回だけ rejoinMinMs まで延ばす）。
 // 切断とつなぎ直しを何回繰り返しても、手番は最初の期限（＋1回だけの延長）までに時間切れで進む。
-// 代役から戻ったときは秒数いっぱい（ここと、一時停止中に猶予を過ぎた場合は review.test.mjs）。
+// 代役から戻ったときは秒数いっぱい。ただし復帰による延長は、猶予の中の復帰と合わせて1つの待ちにつき1回だけ（§18.2）。
+// 一時停止中に猶予を過ぎた場合は review.test.mjs。
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Client, PassiveClient, createRoom, deadlineProblems, sleep, startServer, testRoute, PORTS } from './helpers.mjs';
@@ -178,22 +179,88 @@ describe('猶予の中でつなぎ直したときの期限', () => {
     B.close();
   });
 
-  it('代役から戻ったときは秒数いっぱいに付け直す', async () => {
-    const timing = { cpuDelayMs: 30, disconnectGraceMs: 500, rejoinMinMs: 2000, turnMs: 8000, respondMs: 4000, choiceMs: 4000 };
+  // 代役から戻る経路（decisions §18.2）。代役の操作（cpuDelayMs）を本番と同じく猶予より短くし、
+  // 代役に切り替わってから CPU が操作するまでの窓で戻る。窓を少し広げるため、席が埋まってから cpuDelayMs を差し替える
+  /** A を閉じ、代役に切り替わったのを B で見てから、同じ待ちが残っているうちに戻る。戻れなかったら null。 */
+  async function awayAndBack(roomId, cur, B, awaitId) {
+    cur.close();
+    await cur.waitClosed();
+    const away = await B.waitState((s) => s.room.seats[0].away === true || !s.view.awaiting.some((a) => a.id === awaitId), 10_000, 'A away');
+    if (!away.view.awaiting.some((a) => a.id === awaitId)) return { r: null, away };
+    return { r: await rejoin(roomId, cur), away };
+  }
+  const deadlineOf = (st, awaitId) => st.deadlines.find((d) => d.awaitId === awaitId);
+
+  it('代役から戻ったときは秒数いっぱい。「切断 → 代役 → その窓で復帰」を繰り返しても、延ばすのは1回だけで、待ちは進む', async () => {
+    const timing = { cpuDelayMs: 30, disconnectGraceMs: 1500, rejoinMinMs: 2000, turnMs: 6000, respondMs: 4000, choiceMs: 4000 };
+    const { roomId, B, A, target } = await room(timing);
+    await testRoute(server.base, roomId, 'timing', { cpuDelayMs: 1200 });
+    let cur = A;
+    const lefts = [];
+    let firstFull = null;
+    for (let i = 0; i < 20; i++) {
+      const { r } = await awayAndBack(roomId, cur, B, target.awaitId);
+      if (r === null) break;
+      cur = r.c;
+      const d = deadlineOf(r.st, target.awaitId);
+      if (d === undefined) break;
+      expect(r.st.room.seats[0]).toMatchObject({ connected: true, away: false });
+      lefts.push(d.at - r.st.serverTime);
+      if (firstFull === null) firstFull = d.at;
+    }
+    // 1回目だけ秒数いっぱい。2回目以降は代役の期限（約 cpuDelayMs）のまま
+    expect(lefts.length).toBeGreaterThanOrEqual(2);
+    expect(lefts[0]).toBeGreaterThan(timing.turnMs - 300);
+    for (const x of lefts.slice(1)) expect(x).toBeLessThanOrEqual(1200);
+    const gone = await goneAt(B, target.awaitId);
+    expect(gone.serverTime).toBeLessThan(firstFull + 2 * (timing.disconnectGraceMs + 1200) + 1000);
+    expect(await deadlineProblems(server.base, roomId)).toEqual([]);
+    cur.close();
+    B.close();
+  });
+
+  it('猶予の中の復帰で延ばしたあとは、代役から戻っても期限を変えない', async () => {
+    const timing = { cpuDelayMs: 30, disconnectGraceMs: 1500, rejoinMinMs: 3000, turnMs: 6000, respondMs: 4000, choiceMs: 4000 };
     const { roomId, A, B, target } = await room(timing);
-    // 代役の操作を遅らせ、代役に切り替わったあとも同じ待ちが残るようにする
-    await testRoute(server.base, roomId, 'timing', { cpuDelayMs: 6000 });
+    await testRoute(server.base, roomId, 'timing', { cpuDelayMs: 1200 });
+    // 残りが rejoinMinMs より短くなってから、猶予の中で戻る → 延びる
+    await sleep(Math.max(0, target.at - Date.now() - 2000));
     A.close();
-    const away = await B.waitState((s) => s.room.seats[0].away === true, 10_000, 'A away');
-    expect(away.view.awaiting.some((a) => a.id === target.awaitId)).toBe(true);
-    const r = await rejoin(roomId, A);
-    const d = r.st.deadlines.find((x) => x.awaitId === target.awaitId);
-    expect(d).toBeDefined();
-    expect(r.st.room.seats[0]).toMatchObject({ connected: true, away: false });
-    expect(d.at - r.st.serverTime).toBeGreaterThan(timing.turnMs - 300);
-    expect(d.at - r.st.serverTime).toBeLessThanOrEqual(timing.turnMs);
-    expect(d.at).toBeGreaterThan(target.at);
-    r.c.close();
+    await A.waitClosed();
+    const r1 = await rejoin(roomId, A);
+    const d1 = deadlineOf(r1.st, target.awaitId);
+    expect(d1.at).toBeGreaterThan(target.at);
+    // 代役になってから戻る → 秒数いっぱいにはしない（代役の期限のまま）
+    const { r: r2 } = await awayAndBack(roomId, r1.c, B, target.awaitId);
+    expect(r2).not.toBe(null);
+    const d2 = deadlineOf(r2.st, target.awaitId);
+    expect(d2).toBeDefined();
+    expect(d2.at - r2.st.serverTime).toBeLessThanOrEqual(1200);
+    const gone = await goneAt(B, target.awaitId);
+    expect(gone.serverTime - d2.at).toBeLessThan(1000);
+    r2.c.close();
+    B.close();
+  });
+
+  it('代役から戻って秒数いっぱいにしたあとは、猶予の中の復帰で延ばさない', async () => {
+    const timing = { cpuDelayMs: 30, disconnectGraceMs: 1500, rejoinMinMs: 3000, turnMs: 6000, respondMs: 4000, choiceMs: 4000 };
+    const { roomId, A, B, target } = await room(timing);
+    await testRoute(server.base, roomId, 'timing', { cpuDelayMs: 1200 });
+    const { r: r1 } = await awayAndBack(roomId, A, B, target.awaitId);
+    expect(r1).not.toBe(null);
+    const d1 = deadlineOf(r1.st, target.awaitId);
+    expect(d1.at - r1.st.serverTime).toBeGreaterThan(timing.turnMs - 300);
+    // 残りが rejoinMinMs より短くなってから、猶予の中で戻る → 延ばさない
+    await sleep(Math.max(0, d1.at - r1.st.serverTime - 2000));
+    r1.c.close();
+    await r1.c.waitClosed();
+    const r2 = await rejoin(roomId, r1.c);
+    const d2 = deadlineOf(r2.st, target.awaitId);
+    expect(d2).toBeDefined();
+    expect(d2.at).toBe(d1.at);
+    const gone = await goneAt(B, target.awaitId);
+    expect(gone.serverTime - d1.at).toBeLessThan(1000);
+    r2.c.close();
     B.close();
   });
 });

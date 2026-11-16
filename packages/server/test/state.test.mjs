@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { createMatch } from '@chofugo/engine';
 import { DEFAULT_TIMING } from '../src/timing.ts';
 import { ALL_RULE_IDS } from '@chofugo/engine';
-import { buildMatchConfig, deadlineProblems, initialRoom, isCurrentFormat, modeHasAbilities, normalizeRules, keepSeatDeadlinesOnRejoin, pause, resetSeatDeadlines, resume, STATE_FORMAT, syncDeadlines } from '../src/state.ts';
+import { buildMatchConfig, deadlineProblems, initialRoom, isCurrentFormat, modeHasAbilities, normalizeRules, keepSeatDeadlinesOnRejoin, pause, resetSeatDeadlines, resetSeatDeadlinesOnAwayReturn, resume, STATE_FORMAT, syncDeadlines } from '../src/state.ts';
 
 describe('normalizeRules', () => {
   it('モードで選べないルール・前提のないルールを除き、ALL_RULE_IDS の順に並べる', () => {
@@ -239,9 +239,41 @@ describe('つなぎ直したときの期限（decisions §18.1）', () => {
     expect(s.deadlines[0]).toMatchObject({ awaitId: 102, at: 5000 + 3000 + DEFAULT_TIMING.respondMs, extended: true });
   });
 
-  it('代役からの復帰（resetSeatDeadlines）は秒数いっぱい', () => {
+  it('新しく席に着いたとき（resetSeatDeadlines）は秒数いっぱい。印は変えない', () => {
     const s = setup();
     resetSeatDeadlines(s, 0, 20_000);
-    expect(s.deadlines[0].at).toBe(20_000 + T);
+    expect(s.deadlines[0]).toMatchObject({ at: 20_000 + T, extended: false });
+  });
+
+  it('代役からの復帰は、まだ延ばしていない待ちだけ秒数いっぱい。2回目は期限を変えない（decisions §18.2）', () => {
+    const s = setup();
+    // 代役の期限（約1秒）から戻る
+    s.deadlines[0].at = 20_000 + DEFAULT_TIMING.cpuDelayMs;
+    resetSeatDeadlinesOnAwayReturn(s, 0, 20_000);
+    expect(s.deadlines[0]).toMatchObject({ at: 20_000 + T, extended: true });
+    // もう一度代役になり、また戻る：代役の期限のまま
+    s.deadlines[0].at = 40_000 + DEFAULT_TIMING.cpuDelayMs;
+    resetSeatDeadlinesOnAwayReturn(s, 0, 40_000);
+    expect(s.deadlines[0]).toMatchObject({ at: 40_000 + DEFAULT_TIMING.cpuDelayMs, extended: true });
+    // 猶予の中の復帰でも延ばさない
+    keepSeatDeadlinesOnRejoin(s, 0, 40_000 + 500);
+    expect(s.deadlines[0].at).toBe(40_000 + DEFAULT_TIMING.cpuDelayMs);
+  });
+
+  it('猶予の中の復帰で延ばしたあとは、代役から戻っても期限を変えない', () => {
+    const s = setup();
+    keepSeatDeadlinesOnRejoin(s, 0, 1000 + T - 1000);
+    expect(s.deadlines[0].extended).toBe(true);
+    s.deadlines[0].at = 50_000 + DEFAULT_TIMING.cpuDelayMs;
+    resetSeatDeadlinesOnAwayReturn(s, 0, 50_000);
+    expect(s.deadlines[0].at).toBe(50_000 + DEFAULT_TIMING.cpuDelayMs);
+  });
+
+  it('代役からの復帰の印も、特権で作り直した手番（continues）に引き継ぐ', () => {
+    const s = setup();
+    resetSeatDeadlinesOnAwayReturn(s, 0, 2000);
+    s.match.game.awaiting = [{ id: 101, seat: 0, kind: 'turn', timer: 'turn', continues: 100 }];
+    syncDeadlines(s, 3000);
+    expect(s.deadlines[0]).toMatchObject({ awaitId: 101, at: 2000 + T, extended: true });
   });
 });

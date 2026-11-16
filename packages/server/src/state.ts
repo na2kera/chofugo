@@ -55,7 +55,8 @@ export type Deadline = {
   /** 一時停止中の残り時間。動いている間は null。 */
   remaining: number | null;
   /**
-   * 猶予の中のつなぎ直しで、残りを rejoinMinMs まで延ばしたことがある（decisions §18.1「1つの待ちにつき1回だけ」）。
+   * 復帰で期限を延ばしたことがある（猶予の中の復帰で rejoinMinMs まで、または代役からの復帰で秒数いっぱい。
+   * どちらでも合わせて1つの待ちにつき1回だけ、decisions §18.1・§18.2）。
    * 特権で作り直した手番（continues）にも引き継ぐ。
    */
   extended: boolean;
@@ -260,7 +261,7 @@ export function syncDeadlines(s: RoomState, now: number): void {
   s.deadlines.sort((x, y) => x.awaitId - y.awaitId);
 }
 
-/** 席の待ちの期限を秒数いっぱいに付け直す（代役への切り替え・代役からの復帰・新しく席に着いたとき）。 */
+/** 席の待ちの期限を秒数いっぱいに付け直す（代役への切り替え・新しく席に着いたとき）。 */
 export function resetSeatDeadlines(s: RoomState, seat: SeatId, now: number): void {
   for (const d of s.deadlines) {
     if (d.seat === seat) setDeadlineIn(s, d, durationFor(s, seat, d.timer), now);
@@ -268,8 +269,21 @@ export function resetSeatDeadlines(s: RoomState, seat: SeatId, now: number): voi
 }
 
 /**
+ * 代役から戻ったとき（decisions §18.1・§18.2）。まだ復帰で延ばしていない待ちは秒数いっぱいに付け直し、延ばした印を付ける。
+ * すでに延ばした待ち（猶予の中の復帰で延ばしたものも、代役からの復帰で付け直したものも）は期限を変えない（代役の期限のまま）。
+ */
+export function resetSeatDeadlinesOnAwayReturn(s: RoomState, seat: SeatId, now: number): void {
+  if (isBotSeat(s, seat)) return;
+  for (const d of s.deadlines) {
+    if (d.seat !== seat || d.extended) continue;
+    setDeadlineIn(s, d, humanTimerMs(s.timing, d.timer), now);
+    d.extended = true;
+  }
+}
+
+/**
  * 代役になっていない席がつなぎ直したとき（切断の猶予の中での復帰、decisions §18.1）。
- * 期限は変えない。ただし残りが rejoinMinMs より短いときは、1つの待ちにつき1回だけ、残りを rejoinMinMs にする
+ * 期限は変えない。ただし残りが rejoinMinMs より短いときは、1つの待ちにつき1回だけ（代役からの復帰と合わせて、§18.2）、残りを rejoinMinMs にする
  * （その待ちの秒数より長くはしない）。一時停止中なら残り時間で比べる。
  */
 export function keepSeatDeadlinesOnRejoin(s: RoomState, seat: SeatId, now: number): void {

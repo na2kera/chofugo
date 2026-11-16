@@ -40,6 +40,7 @@ import {
   normalizeRules,
   pause,
   resetSeatDeadlines,
+  resetSeatDeadlinesOnAwayReturn,
   resume,
   roomPhase,
   seatRec,
@@ -48,7 +49,7 @@ import {
   type RoomState,
 } from './state.ts';
 import { parseClientMessage } from './validate.ts';
-import type { Timing } from './timing.ts';
+import { DEFAULT_TIMING, type Timing } from './timing.ts';
 
 const ROOM_KEY = 'room';
 const ACTIONS_PREFIX = 'actions:';
@@ -108,10 +109,12 @@ class Tx {
   readonly accepted = new Map<WebSocket, ReqId>();
   /**
    * hello で席に着いた人の期限の扱い（decisions §18.1）。
-   * full = 秒数いっぱいに付け直す（代役からの復帰、新しく席に着いた人）。
-   * keep = 期限を変えない（猶予の中での復帰。残りが短ければ1回だけ延ばす）。
+   * new = 秒数いっぱいに付け直す（新しく席に着いた人）。
+   * away = 代役からの復帰。まだ延ばしていない待ちだけ秒数いっぱいにする（§18.2）。
+   * keep = 期限を変えない（猶予の中での復帰。残りが短ければ延ばす）。
+   * 復帰による延長は、away と keep を合わせて1つの待ちにつき1回だけ（Deadline.extended）。
    */
-  readonly rejoined = new Map<SeatId, 'full' | 'keep'>();
+  readonly rejoined = new Map<SeatId, 'new' | 'away' | 'keep'>();
   /** 追記する操作の記録（ゲームの番号ごと）。 */
   readonly logs = new Map<number, LoggedAction[]>();
   clearLogs = false;
@@ -205,6 +208,14 @@ export class Room extends DurableObject<Env> {
     return (this.env as unknown as Record<string, unknown>)['CHOFUGO_TEST_MODE'] === '1';
   }
 
+  /**
+   * テスト用の処理の入口で呼ぶ。テストのときでなければ例外で拒否する。
+   * HTTP の入口（index.ts）でも閉じているが、Durable Object の側でも閉じておく（どちらか一方の漏れで本番から呼べないように）。
+   */
+  private requireTestMode(): void {
+    if (!this.isTestMode()) throw new Error('test only');
+  }
+
   private attachment(ws: WebSocket): Attachment | null {
     try {
       const a: unknown = ws.deserializeAttachment();
@@ -235,9 +246,10 @@ export class Room extends DurableObject<Env> {
   async create(roomId: string, timing: Timing, seed: [number, number, number, number] | null = null): Promise<boolean> {
     if (this.load() !== null) return false;
     const now = Date.now();
-    const s = initialRoom(roomId, now, timing);
-    // テスト用の固定の種（Worker がテストのときだけ渡す）
-    if (seed !== null) this.ctx.storage.kv.put(SEED_KEY, seed);
+    // 秒数の差し替えと固定の種はテストのときだけ（Worker もテストのときだけ渡すが、ここでも本番では使わない）
+    const test = this.isTestMode();
+    const s = initialRoom(roomId, now, test ? timing : { ...DEFAULT_TIMING });
+    if (test && seed !== null) this.ctx.storage.kv.put(SEED_KEY, seed);
     const want = nextAlarm(s);
     s.alarmAt = want;
     this.ctx.storage.kv.put(ROOM_KEY, s);
@@ -247,11 +259,13 @@ export class Room extends DurableObject<Env> {
 
   /** テスト用：このインスタンスの識別子（休止から作り直されたかを確かめる）。 */
   async instance(): Promise<string> {
+    this.requireTestMode();
     return this.instanceId;
   }
 
   /** テスト用：アラームの処理をいま実行する（2回鳴った場合の確認）。Worker がテストのときだけ呼ぶ。 */
   async runAlarmNow(): Promise<number | null> {
+    this.requireTestMode();
     await this.alarm();
     const s = this.load();
     return s === null || s === 'stale' ? null : s.version;
@@ -259,6 +273,7 @@ export class Room extends DurableObject<Env> {
 
   /** テスト用：保存の有無（ルームの値・操作の記録の数・アラーム）。保存が消えたことを確かめる。 */
   async storageInfo(): Promise<{ room: boolean; actions: number; keys: number; alarm: number | null }> {
+    this.requireTestMode();
     let actions = 0;
     let keys = 0;
     for (const [key] of this.ctx.storage.kv.list()) {
@@ -270,6 +285,7 @@ export class Room extends DurableObject<Env> {
 
   /** テスト用：作ったあとのルームの秒数を差し替え、アラームを設定し直す。ルームがなければ false。 */
   async patchTiming(patch: Partial<Timing>): Promise<boolean> {
+    this.requireTestMode();
     const s = this.load();
     if (s === null || s === 'stale') return false;
     s.timing = { ...s.timing, ...patch };
@@ -283,11 +299,13 @@ export class Room extends DurableObject<Env> {
 
   /** テスト用：期限についての検査（design-2 §3.4）で見つかった問題の一覧。 */
   async problems(): Promise<string[]> {
+    this.requireTestMode();
     return this.ctx.storage.kv.get<string[]>(PROBLEMS_KEY) ?? [];
   }
 
   /** テスト用：保存している値を、形式の番号の古い値に書き換える（更新をまたいだルームの再現、design-2 §3.5）。 */
   async makeOldFormat(): Promise<boolean> {
+    this.requireTestMode();
     const s = this.load();
     if (s === null || s === 'stale') return false;
     const old = { ...s, v: 3 };
@@ -299,6 +317,7 @@ export class Room extends DurableObject<Env> {
    * テスト用：保存した設定・種・操作の記録から試合を作り直し、保存されている試合の状態と一致するかを返す（design §8.2「操作の記録」）。
    */
   async replayCheck(): Promise<{ ok: boolean; actions: number; reason?: string }> {
+    this.requireTestMode();
     const s = this.load();
     if (s === null || s === 'stale' || s.match === null || s.matchInit === null) return { ok: false, actions: 0, reason: 'no match' };
     const created = createMatch(s.matchInit.config, s.matchInit.seed);
@@ -622,7 +641,7 @@ export class Room extends DurableObject<Env> {
       r.disconnectedAt = null;
       r.away = false;
       if (s.match === null) r.name = name;
-      tx.rejoined.set(seat, wasAway ? 'full' : 'keep');
+      tx.rejoined.set(seat, wasAway ? 'away' : 'keep');
     } else {
       const phase = s.match?.phase ?? null;
       if (phase === null) {
@@ -642,7 +661,7 @@ export class Room extends DurableObject<Env> {
       }
       const old = seatRec(s, seat);
       s.seats[seat] = { kind: 'human', name, tokenHash, gen: old.gen + 1, connected: true, disconnectedAt: null, away: false };
-      tx.rejoined.set(seat, 'full');
+      tx.rejoined.set(seat, 'new');
     }
     att.seat = seat;
     att.gen = seatRec(s, seat).gen;
@@ -745,9 +764,11 @@ export class Room extends DurableObject<Env> {
     if (connectedHumans(s) === 0) pause(s, now);
     else resume(s, now);
     syncDeadlines(s, now);
-    // 席に着いた本人の待ち（decisions §18.1）：代役からの復帰・新しい席は秒数いっぱい、猶予の中の復帰は期限を変えない（短ければ1回だけ延ばす）
+    // 席に着いた本人の待ち（decisions §18.1・§18.2）：新しい席は秒数いっぱい。代役からの復帰は秒数いっぱい、猶予の中の復帰は期限を変えない
+    // （短ければ延ばす）。復帰による延長は、どちらでも合わせて1つの待ちにつき1回だけ
     for (const [seat, how] of tx.rejoined) {
-      if (how === 'full') resetSeatDeadlines(s, seat, now);
+      if (how === 'new') resetSeatDeadlines(s, seat, now);
+      else if (how === 'away') resetSeatDeadlinesOnAwayReturn(s, seat, now);
       else keepSeatDeadlinesOnRejoin(s, seat, now);
     }
     tx.rejoined.clear();
