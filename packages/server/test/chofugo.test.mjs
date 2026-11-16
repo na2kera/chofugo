@@ -185,7 +185,7 @@ describe('人間の大富豪（design-3 §6.1、§6.2）', () => {
     expect(d0).toMatchObject({ seat: 0, kind: 'abilitySelect' });
     expect(d0.at - sel.serverTime).toBeLessThanOrEqual(timing.abilityMs);
     // ほかの人には、選んでいる人と個数だけ
-    const o = others[0].state.view;
+    const o = (await others[0].waitState((s) => s.matchPhase === "ability" && s.view.gameNo === sel.view.gameNo, 5000, "others see selecting")).view;
     expect(o.game.abilities).toMatchObject({ holder: 0, slots, selecting: true });
     expect(o.game.myAbilities).toBe(null);
     expect(o.mine).toBe(null);
@@ -213,7 +213,7 @@ describe('人間の大富豪（design-3 §6.1、§6.2）', () => {
     expect(chosen.abilities).toEqual(['ban']);
     expect(chosen.count).toBe(1);
     // ほかの人には個数だけ
-    const seen = eventsOf(others[0]).find((e) => e.seq === chosen.seq);
+    const seen = await others[0].waitFor(() => eventsOf(others[0]).find((e) => e.seq === chosen.seq), 5000, "chosen seen by others");
     expect(seen).toMatchObject({ type: 'abilitiesChosen', seat: 0, count: 1, abilities: null });
     // 時間切れのあとに届いた古い番号の保存は拒否される
     const late = await holder.waitError(holder.send({ type: 'action', action: { type: 'selectAbilities', awaitId, abilities: ['skip'], confirm: false } }));
