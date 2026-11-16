@@ -2,7 +2,8 @@
 // 定番8種だけの試合を、ルールの組み合わせ数通り × 種を数個、決まった操作の選び方で最後まで進め、
 // 出来事の列と最後の状態の要点（得点・結果・乱数の状態・通し番号）を記録したファイルと完全に一致することを確かめる。
 //
-// 記録はその2の変更を入れる前の engine（コミット「engine: その1と同じ動きの検査の記録を追加」）で作った。
+// 定番8種の記録はその2の変更を入れる前の engine（コミット「engine: その1と同じ動きの検査の記録を追加」）で作った。
+// s2- で始まる記録（16種すべて ON などの特権なしの試合）は、その3の変更を入れる前の engine（144e637）で作った（design-3 §2.8）。
 // ふだんは比較だけを行う。記録と違えば失敗し、記録のファイルがなくても失敗する（黙って作り直さない。design-2 §6.6）。
 //
 // 記録を作る・作り直す手順（定番8種の挙動を意図して変えたときだけ。ふつうは作り直さない）:
@@ -20,6 +21,7 @@ import {
   type GameEvent,
   type MatchState,
   type RuleId,
+  ALL_RULE_IDS,
 } from './index.ts';
 import { nextInt, rngFromSeed, type RngState } from './rng.ts';
 
@@ -37,6 +39,20 @@ const COMBOS: { name: string; rules: RuleId[] }[] = [
   { name: 'flush', rules: ['flush_on_8', 'spade3_beats_joker', 'forbidden_finish', 'dethrone'] },
   { name: 'reverse', rules: ['revolution', 'temp_reverse_on_j', 'suit_lock'] },
 ];
+/**
+ * その2の記録（その3の変更を入れる前の engine で作った。特権なし）。16種すべて ON と、応用のルールを含む組み合わせ。
+ * 記録の作り方・比べ方は、上の定番8種の記録と同じ。名前は 's2-' で始める。
+ */
+const COMBOS_S2: { name: string; rules: RuleId[] }[] = [
+  { name: 's2-all16', rules: ALL_RULE_IDS.slice() },
+  { name: 's2-flushlock', rules: ['flush_on_8', 'block_flush_with_4', 'sequence_lock', 'suit_lock', 'runs', 'spade3_beats_joker'] },
+  {
+    name: 's2-numbers',
+    rules: ['diamond3_start', 'triple3_trump', 'give_on_7', 'discard_on_10', 'dethrone', 'forbidden_finish', 'revolution'],
+  },
+  { name: 's2-order', rules: ['reverse_order_on_9', 'skip_on_k', 'spade3_beats_joker', 'temp_reverse_on_j', 'flush_on_8', 'runs'] },
+];
+const ALL_COMBOS = [...COMBOS, ...COMBOS_S2];
 const SEEDS: Seed4[] = [
   [1, 2, 3, 4],
   [20261117, 7, 0xabcdef, 99],
@@ -72,6 +88,14 @@ function mixedAction(s: MatchState, rng: RngState): Action {
     const opts: Action[] = m.plays.map((p) => ({ type: 'respond', seat: w.seat, awaitId: w.id, cards: p.cards }));
     opts.push({ type: 'respond', seat: w.seat, awaitId: w.id, cards: null });
     return pick(rng, opts);
+  }
+  if (m.kind === 'choice') {
+    // 7渡し・10捨て: 手札から 0〜max 枚をでたらめに選ぶ（定番8種の試合ではこの待ちが出ないので、その記録には影響しない）
+    const hand = (s.game?.hands[w.seat] ?? []).slice();
+    const n = nextInt(rng, Math.min(m.max, hand.length) + 1);
+    const cards: string[] = [];
+    for (let i = 0; i < n; i++) cards.push(...hand.splice(nextInt(rng, hand.length), 1));
+    return { type: 'choose', seat: w.seat, awaitId: w.id, cards };
   }
   return { type: 'auto', awaitId: w.id, policy: 'cpu' };
 }
@@ -110,14 +134,14 @@ const RECORD_MODE = process.env['CHOFUGO_COMPAT_RECORD'] === '1';
 /** 記録のファイル（ふだんの比較に使う。読むだけ）。キーは './compat/名前.jsonl'。 */
 const RECORDS = import.meta.glob('./compat/*.jsonl', { query: '?raw', import: 'default', eager: true });
 
-describe('その1と同じ動きの検査（定番8種だけの試合）', () => {
+describe('変更前と同じ動きの検査（定番8種の試合と、その2のルールを含む特権なしの試合）', () => {
   it('記録のファイルの数が、試合の一覧と同じ', () => {
     if (RECORD_MODE) return;
-    const expected = COMBOS.length * SEEDS.reduce((n, _, si) => n + (si < 2 ? 2 : 1), 0);
+    const expected = ALL_COMBOS.length * SEEDS.reduce((n, _, si) => n + (si < 2 ? 2 : 1), 0);
     expect(Object.keys(RECORDS)).toHaveLength(expected);
   });
 
-  for (const combo of COMBOS) {
+  for (const combo of ALL_COMBOS) {
     SEEDS.forEach((seed, si) => {
       const modes: Mode[] = si < 2 ? ['cpu', 'mixed'] : ['cpu'];
       for (const mode of modes) {
