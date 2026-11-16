@@ -390,9 +390,13 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
   }
 
   const title = view.gameCount === null ? `第${view.gameNo}ゲーム` : `第${view.gameNo}ゲーム/${view.gameCount}`;
+  // 特権の選択（選ぶ人）だけ、「決定」を画面の下に固定し、その上を縦にスクロールさせる（ロビーの「ゲームを始める」と同じ作り）。
+  // ほかの画面では包みの div を display: contents にして、配置を変えない
+  const pinActions = mine !== null && mine.kind === 'abilitySelect';
 
   return (
-    <div className={s.table}>
+    <div className={`${s.table} ${pinActions ? s.tablePinned : ''}`}>
+      <div className={pinActions ? s.scroll : s.flow}>
       <div className={s.topbar}>
         <span className="mut">{title}</span>
         <button type="button" className={s.menuBtn} aria-label="メニュー" onClick={() => setMenuOpen(true)}>
@@ -470,6 +474,7 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
       </div>
 
       <Hand cards={hand} lookOf={lookOf} receivedOf={(id) => received.has(id)} peekedOf={(id) => peekedMine.has(id)} {...(onPress ? { onPress } : {})} />
+      </div>
 
       <div className={s.actionArea}>{actions}</div>
 

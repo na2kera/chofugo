@@ -11,6 +11,9 @@
 //   ゲームの結果では次のゲームを配る。試合の結果に着いたら終わる（--rematch ならもう一度）。
 //   --mode / --rules はボットがホストのときに設定する（--rules all はそのモードで選べるルールすべて）。
 //   設定はサーバーが直す（モードで選べないルール・前提のないルールは外れる）。指定がなければルームの設定のまま。
+//   --rules の ID は送る前に確かめる（知らない ID・重複・値なしはエラーで終わる）。設定を送ったら、届いた設定
+//   （mode・gameCount が頼んだとおりで、rules が頼んだものの中だけ。超富豪は16種）を確かめてから start を送る。
+//   設定が拒否されたら（error）、エラーで終わる。終わるときに、各ボットの拒否の件数を出す。
 //   7渡し・10捨ての選択（choice）では、手札からでたらめに 0〜上限枚を選ぶ。
 //   超富豪モード（--mode chofugo。ルールは16種で固定）：特権の選択では 0〜枠の数をでたらめに選んで確定し、
 //   手番では時々（3割）使える特権をでたらめな相手・カード・数字で使い、スキップを付けられる手には時々付ける。
@@ -42,9 +45,36 @@ const ALL_RULES = [
   'forbidden_finish', 'dethrone', 'diamond3_start', 'triple3_trump', 'give_on_7', 'reverse_order_on_9', 'discard_on_10', 'skip_on_k',
 ];
 const DAIFUGO_RULES = ['flush_on_8', 'revolution', 'temp_reverse_on_j', 'spade3_beats_joker', 'suit_lock', 'runs', 'forbidden_finish', 'dethrone'];
-if (MODE !== null && MODE !== 'daifugo' && MODE !== 'custom' && MODE !== 'chofugo') throw new Error('--mode は daifugo・custom・chofugo のどれか');
+if (MODE !== null && MODE !== 'daifugo' && MODE !== 'custom' && MODE !== 'chofugo') fail('--mode は daifugo・custom・chofugo のどれか');
+// --rules はルームを作る前に確かめる（誤った ID で設定が拒否され、もとの設定のまま試合が始まるのを防ぐ）
+if (RULES === true) fail('--rules には all か、ルール ID をカンマで区切って渡す');
+if (typeof RULES === 'string' && RULES !== 'all') {
+  const ids = RULES.split(',').map((x) => x.trim()).filter(Boolean);
+  const unknown = ids.filter((x) => !ALL_RULES.includes(x));
+  if (ids.length === 0) fail('--rules にルール ID がない');
+  if (unknown.length > 0) fail(`--rules に知らないルール ID がある: ${unknown.join(',')}`);
+  if (new Set(ids).size !== ids.length) fail('--rules に同じ ID が2回ある');
+}
+
+function fail(message) {
+  console.error(message);
+  process.exit(1);
+}
 // engine の ALL_ABILITY_IDS（その3）
 const ALL_ABILITIES = ['peek', 'steal', 'forceFlush', 'ban', 'revolution', 'skip'];
+
+/**
+ * 届いた設定が、送った設定（want）の結果として正しいか。mode と gameCount は頼んだとおり、
+ * rules はサーバーが直すので「頼んだものの中だけ」（超富豪は16種すべて）を確かめる。
+ */
+function configMatches(cfg, want) {
+  if (cfg.mode !== want.mode || cfg.gameCount !== want.gameCount) return false;
+  if (want.mode === 'chofugo') return cfg.rules.length === ALL_RULES.length;
+  return cfg.rules.every((r) => want.rules.includes(r));
+}
+
+/** 設定の返事を待つ時間。内容が変わらない設定には state が返らないので、そのときは届いている設定で確かめる。 */
+const CONFIG_WAIT_MS = 3000;
 
 /** ホストのときに送る設定（指定がなければいまの設定）。 */
 function wantedConfig(cur, gameCount) {
@@ -165,6 +195,10 @@ class Bot {
     this.reqId = 0;
     this.done = new Set();
     this.finished = false;
+    /** 拒否された送信（error）。 */
+    this.rejects = [];
+    /** 返事を待っている設定 { reqId, want, resolve, reject }。 */
+    this.cfgWait = null;
   }
 
   connect() {
@@ -187,7 +221,7 @@ class Bot {
         if (e.data === 'pong') return;
         const msg = JSON.parse(e.data);
         if (msg.type === 'state') this.onState(msg);
-        else if (msg.type === 'error' && !['staleMatch', 'wrongPhase'].includes(msg.code)) log(`${this.name}: 拒否 ${msg.code} ${msg.engineError ?? ''}`);
+        else if (msg.type === 'error') this.onError(msg);
       };
     });
   }
@@ -195,6 +229,58 @@ class Bot {
   send(obj) {
     this.reqId += 1;
     this.ws.send(JSON.stringify({ ...obj, reqId: this.reqId }));
+    return this.reqId;
+  }
+
+  onError(msg) {
+    this.rejects.push(msg);
+    // 拒否は数えて最後に出す（ボットの試合は拒否0件が正しい）
+    console.log(`${this.name}: 拒否 ${msg.code} ${msg.engineError ?? ''} ${msg.message}`);
+    if (this.cfgWait !== null && msg.reqId === this.cfgWait.reqId) {
+      const w = this.cfgWait;
+      this.cfgWait = null;
+      w.reject(new Error(`設定が拒否された: ${msg.code} ${msg.message}`));
+    }
+  }
+
+  /** 設定を送り、届いた設定を確かめる。拒否されたら例外。 */
+  setConfig(want) {
+    return new Promise((resolve, reject) => {
+      const reqId = this.send(want);
+      const timer = setTimeout(() => {
+        // 内容の変わらない設定には state が返らない：届いている設定で確かめる
+        if (this.cfgWait === null || this.cfgWait.reqId !== reqId) return;
+        this.cfgWait = null;
+        const cur = this.state?.room.config;
+        if (cur && configMatches(cur, want)) resolve(cur);
+        else reject(new Error(`設定が届かない（いまの設定: ${JSON.stringify(cur)}）`));
+      }, CONFIG_WAIT_MS);
+      this.cfgWait = {
+        reqId,
+        want,
+        resolve: (cfg) => {
+          clearTimeout(timer);
+          resolve(cfg);
+        },
+        reject: (e) => {
+          clearTimeout(timer);
+          reject(e);
+        },
+      };
+    });
+  }
+
+  /** 設定を確かめてから試合を始める（ボットがホストのとき）。 */
+  async configureAndStart(s) {
+    const gameCount = GAMES === '0' ? null : Number(GAMES);
+    const want = wantedConfig(s.room.config, gameCount);
+    try {
+      const cfg = await this.setConfig(want);
+      log(`${this.name}: 設定 ${cfg.mode} ${cfg.rules.length}種 ゲーム数 ${cfg.gameCount ?? '無制限'}`);
+    } catch (e) {
+      fail(e.message);
+    }
+    this.send({ type: 'start' });
   }
 
   once(key, fn, delay = DELAY) {
@@ -208,6 +294,7 @@ class Bot {
   onState(s) {
     const prevPhase = this.state?.matchPhase;
     this.state = s;
+    if (this.cfgWait !== null && configMatches(s.room.config, this.cfgWait.want)) this.cfgWait.resolve(s.room.config);
     if (s.seat === null) return;
     // その2の出来事を数える（ルールが実際に起きたかの目安）
     if (!s.eventsFull) {
@@ -237,12 +324,8 @@ class Bot {
     if (s.matchPhase === null) {
       const humans = s.room.seats.filter((x) => x.kind === 'human').length;
       if (humans >= START_WHEN) {
-        const gameCount = GAMES === '0' ? null : Number(GAMES);
-        // 設定と開始は同じ接続で続けて送る（届く順は送った順なので、短い --delay でも設定が先に効く）
-        this.once(`start`, () => {
-          this.send(wantedConfig(s.room.config, gameCount));
-          this.send({ type: 'start' });
-        }, DELAY);
+        // 設定が届いたことを確かめてから開始を送る（設定が拒否されたら始めずに終わる）
+        this.once(`start`, () => void this.configureAndStart(s), DELAY);
       }
     } else if (s.matchPhase === 'gameResult') {
       this.once(`${s.matchId}:next${s.view.gameNo}`, () => this.send({ type: 'nextGame', matchId: s.matchId }), DELAY * 3);
@@ -285,6 +368,8 @@ async function main() {
   process.on('SIGTERM', stop);
   while (!bots.every((b) => b.finished)) await sleep(500);
   await sleep(300);
+  const rejects = bots.reduce((n, b) => n + b.rejects.length, 0);
+  console.log(`拒否 ${rejects}件（${bots.map((b) => `${b.name} ${b.rejects.length}`).join(' / ')}）`);
   stop();
 }
 

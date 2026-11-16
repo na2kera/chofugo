@@ -8,6 +8,23 @@
   position: relative;
 }
 
+/* 特権の選択（選ぶ人）：「決定」を下に固定し、その上（相手の枠・特権の一覧・メッセージ・手札）を縦にスクロール */
+.tablePinned {
+  overflow: hidden;
+}
+.scroll {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+/* ほかの画面：包みがないのと同じ（子は .table の並びにそのまま入る） */
+.flow {
+  display: contents;
+}
+
 .topbar {
   display: flex;
   align-items: center;
