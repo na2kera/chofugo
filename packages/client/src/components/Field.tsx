@@ -31,6 +31,11 @@ export function Field({ play, revolution, tempReverse, reversed, suitLock, motio
   const cards = play?.cards ?? [];
   const lay = fieldLayout(cards.length, width);
   const hasJokerLabel = play !== null && play.jokers.some((j) => j.rank !== null);
+  // 添え字の場所：1段ならカードの下。2段なら上の段はカードの上、下の段はカードの下
+  const rowHasLabel = (r: number) => play !== null && (lay.rows[r] ?? []).some((i) => jokerStandIn(play, cards[i]!) !== null);
+  const twoRows = lay.rows.length > 1;
+  const padTop = twoRows && rowHasLabel(0) ? 20 : 0;
+  const padBottom = twoRows ? (rowHasLabel(1) ? 20 : 0) : hasJokerLabel ? 20 : 0;
   const motionCls =
     motion === null ? '' : motion.kind === 'out' ? s.out : motion.from === 'me' ? s.inMe : [s.inLeft, s.inCenter, s.inRight][motion.from];
   return (
@@ -54,7 +59,7 @@ export function Field({ play, revolution, tempReverse, reversed, suitLock, motio
           <div
             key={motionKey}
             className={`${s.cards} ${motionCls}`}
-            style={{ height: lay.height + (hasJokerLabel ? (lay.rows.length > 1 ? 40 : 20) : 0) }}
+            style={{ height: lay.height + padTop + padBottom }}
             role="group"
             aria-label="場のカード"
           >
@@ -64,9 +69,8 @@ export function Field({ play, revolution, tempReverse, reversed, suitLock, motio
                 const stand = jokerStandIn(play, id);
                 const left = (lay.starts[r] ?? 0) + j * lay.step;
                 // 2段のときは、上の段の添え字をカードの上に出す（下の段に隠れるため）
-                const above = hasJokerLabel && lay.rows.length > 1;
-                const top = r * ROW_STEP + (above ? 20 : 0);
-                const labelAbove = above && r === 0;
+                const top = r * ROW_STEP + padTop;
+                const labelAbove = twoRows && r === 0;
                 return (
                   <div key={id} className={s.slot} style={{ left, top }}>
                     <Card id={id} large={lay.large} {...(stand !== null ? { extraLabel: `${stand}の代わり` } : {})} />

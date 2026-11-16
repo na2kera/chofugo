@@ -28,7 +28,7 @@ function MiniCard({ id }: { id: CardId }) {
   if (f === null) return null;
   if (f.kind === 'joker') return <span className={s.joker}>JK</span>;
   return (
-    <span className={`${s.mini} ${isRedSuit(f.suit) ? 'redt' : ''}`}>
+    <span className={`${s.mini} ${isRedSuit(f.suit) ? s.redMini : ''}`}>
       <Pixel rows={SUIT_GLYPHS_SMALL[f.suit]} unit={2} />
       {f.key}
     </span>
