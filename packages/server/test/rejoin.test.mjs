@@ -5,7 +5,7 @@
 // 一時停止中に猶予を過ぎた場合は review.test.mjs。
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Client, PassiveClient, createRoom, deadlineProblems, sleep, startServer, testRoute, PORTS } from './helpers.mjs';
+import { Client, HolderClient, PassiveClient, createRoom, deadlineProblems, sleep, startServer, testRoute, PORTS } from './helpers.mjs';
 
 let server;
 beforeAll(async () => {
@@ -304,4 +304,75 @@ describe('人間1人のルーム（つなぎ直すたびに全員不在の一時
     cur.close();
     O.close();
   });
+});
+
+describe('代役の CPU が特権を使ったあとの延長の印（room.ts の runExpired → applyEngine → syncDeadlines を通す）', () => {
+  it('延長済みの席が代役になり、期限が来て CPU が強奪を使い手番が作り直されても、本人が戻ったとき秒数いっぱいにならない', async () => {
+    const timing = { cpuDelayMs: 20, disconnectGraceMs: 400, abilityMs: 30_000, turnMs: 20_000, exchangeMs: 15_000, respondMs: 10_000, choiceMs: 10_000 };
+    const roomId = await createRoom(server.base, timing);
+    const holder = new HolderClient(server.base, roomId, { name: 'H', stopOnAbility: true });
+    await holder.connect();
+    holder.hello();
+    await holder.waitState((s) => s.seat === 0);
+    const others = [];
+    for (let i = 1; i <= 3; i++) {
+      const c = new PassiveClient(server.base, roomId, { name: `P${i}` });
+      await c.connect();
+      c.hello();
+      await c.waitState((s) => s.seat === i);
+      others.push(c);
+    }
+    holder.send({ type: 'setConfig', mode: 'chofugo', rules: [], gameCount: null });
+    await holder.waitState((s) => s.room.config.mode === 'chofugo', 5000, 'chofugo');
+    holder.send({ type: 'start' });
+    const P = others[0];
+    const eventsOf = (c) => c.states.flatMap((x) => x.events);
+    // 席0が大富豪になり、特権の選択が来たら強奪だけを選ぶ（CPU の決まりでは、最初の自分の手番で使う。decisions §5.9）
+    await holder.waitFor(() => (holder.manual && holder.state.view.mine?.kind === 'abilitySelect' ? true : undefined), 150_000, 'ability select');
+    holder.send({ type: 'action', action: { type: 'selectAbilities', awaitId: holder.state.view.mine.awaitId, abilities: ['steal'], confirm: true } });
+    await holder.waitState((s) => s.view.mine?.kind !== 'abilitySelect', 10_000, 'confirmed');
+    holder.resume();
+    // 強奪を使える最初の手番で止まる
+    const turn = await holder.waitFor(
+      () => (holder.manual && holder.state.view.mine?.kind === 'turn' && holder.state.view.mine.abilities.some((u) => u.id === 'steal' && u.usable) ? holder.state : undefined),
+      60_000,
+      'turn with steal',
+    );
+    const turnId = turn.view.mine.awaitId;
+    const gameNo = turn.view.gameNo;
+    // 代役の操作を遅らせ、代役に切り替わってから CPU が操作するまでの窓で戻れるようにする
+    const CPU = 4000;
+    await testRoute(server.base, roomId, 'timing', { cpuDelayMs: CPU });
+    const rejoinHolder = async (prev) => {
+      const c = new HolderClient(server.base, roomId, { name: 'H', token: prev.token });
+      c.manual = true;
+      await c.connect();
+      c.hello();
+      const st = await c.waitState((x) => x.seat === 0 && x.eventsFull, 10_000, 'holder back');
+      return { c, st };
+    };
+    // 1. 代役から戻る → 秒数いっぱい（この待ちの延長を使う）
+    holder.close();
+    await holder.waitClosed();
+    await P.waitState((x) => x.room.seats[0].away === true, 10_000, 'away 1');
+    const r1 = await rejoinHolder(holder);
+    const d1 = r1.st.deadlines.find((d) => d.awaitId === turnId);
+    expect(d1).toBeDefined();
+    expect(d1.at - r1.st.serverTime).toBeGreaterThan(timing.turnMs - 500);
+    // 2. もう一度代役になる → 期限（約 CPU ミリ秒後）が来て、代役の CPU が強奪を使う → 同じ手番が新しい番号で作り直される
+    r1.c.close();
+    await r1.c.waitClosed();
+    await P.waitState((x) => x.room.seats[0].away === true, 10_000, 'away 2');
+    await P.waitFor(() => eventsOf(P).find((e) => e.type === 'ability' && e.seat === 0 && e.ability === 'steal' && e.gameNo === gameNo), 15_000, 'cpu steal');
+    const re = await P.waitState((x) => x.view.awaiting.some((a) => a.seat === 0 && a.kind === 'turn' && a.id !== turnId), 5000, 'recreated turn');
+    const newId = re.view.awaiting.find((a) => a.seat === 0 && a.kind === 'turn').id;
+    // 3. CPU がカードを出す前に戻る：印が引き継がれているので、秒数いっぱいにしない（代役の期限のまま）
+    const r2 = await rejoinHolder(r1.c);
+    const d2 = r2.st.deadlines.find((d) => d.awaitId === newId);
+    expect(d2).toBeDefined();
+    expect(d2.at - r2.st.serverTime).toBeLessThanOrEqual(CPU);
+    expect(await deadlineProblems(server.base, roomId)).toEqual([]);
+    r2.c.close();
+    for (const c of others) c.close();
+  }, 240_000);
 });

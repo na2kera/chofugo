@@ -375,7 +375,7 @@ describe('代役への切り替えと、CPU の特権のあとの印（decisions
       t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
-    const stats = { scenarios: 0, extended: 0, awayReturns: 0, keepReturns: 0, pauses: 0, botContinues: 0, humanContinues: 0, expired: 0, backAfterBotContinue: 0 };
+    const stats = { scenarios: 0, extended: 0, awayReturns: 0, keepReturns: 0, pauses: 0, botContinues: 0, humanContinues: 0, expired: 0, backAfterBotContinue: 0, finishedAfter: 0 };
     for (let seed = 1; seed <= 800; seed++) {
       const rnd = mulberry(seed);
       const pick = (n) => Math.floor(rnd() * n);
@@ -485,6 +485,21 @@ describe('代役への切り替えと、CPU の特権のあとの印（decisions
           });
         } else if (op === 5) run('settle', () => settle());
       }
+      // 列のあと：本人の接続を保ったまま（切れていれば戻して）時計とアラームを進めると、決めた上限のうちに待ちが終わる。
+      // 上限は、動いている時間（一時停止を除く）で、秒数いっぱい（turnMs）＋代役の約1秒＋余裕。本人が戻ったあとは一時停止にならない
+      if (!done) {
+        stats.finishedAfter++;
+        if (!s.seats[0].connected) backA();
+        const LIMIT = DEFAULT_TIMING.turnMs + DEFAULT_TIMING.cpuDelayMs + 1000;
+        let running = 0;
+        for (let g = 0; g < 1000 && !done && running <= LIMIT; g++) {
+          const t0 = now;
+          const wasRunning = s.pausedAt === null;
+          advance(250);
+          if (wasRunning && s.pausedAt === null) running += now - t0;
+        }
+        if (!done) throw new Error(`seed ${seed}: the await did not finish within ${LIMIT}ms of running time\n${trace.join('\n')}`);
+      }
       stats.scenarios++;
       if (increases > 0) stats.extended++;
       if (increases > 1) throw new Error(`seed ${seed}: ${increases} increases\n${trace.join('\n')}`);
@@ -498,5 +513,7 @@ describe('代役への切り替えと、CPU の特権のあとの印（decisions
     expect(stats.botContinues).toBeGreaterThan(20);
     expect(stats.humanContinues).toBeGreaterThan(20);
     expect(stats.backAfterBotContinue).toBeGreaterThan(20);
+    // 列の中で終わらなかった待ちも、列のあとの検査で終わった
+    expect(stats.finishedAfter).toBeGreaterThan(100);
   });
 });
