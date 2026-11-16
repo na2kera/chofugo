@@ -116,6 +116,8 @@ describe('7渡しの選択', () => {
     const skipState = await me.waitFor(() => me.states.find((s) => s.events.some((e) => e.type === 'choiceSkip' && e.seat === 0)), WAIT, 'timeout skip');
     // 時間切れの処理は期限の後（順序で確かめる。機械の重さで期限の後ろが延びても落ちない）
     expect(skipState.serverTime).toBeGreaterThanOrEqual(dl.d.at);
+    // 時間切れの自動の操作で進んだ state には、受理の印（acceptedReqId）は付かない（G9）
+    expect(skipState.acceptedReqId).toBe(undefined);
     expect(eventsOf(all).some((e) => e.type === 'give' && e.from === 0)).toBe(false);
 
     // (2) CPU の選択：いちばん弱いカードから上限まで渡す。CPU どうしの give は、自分には枚数だけ
