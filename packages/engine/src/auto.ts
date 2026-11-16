@@ -1,4 +1,4 @@
-// auto 操作の決め方（timeout: decisions §8、cpu: design §3.6・decisions §14.9）。
+// auto 操作の決め方（timeout: decisions §8、cpu: design §3.6・decisions §14.9 を差し替えた §14.14）。
 
 import { compareCardIds } from './cards.ts';
 import { autoLowerGive, autoUpperGive, exchangeTaskFor } from './exchange.ts';
@@ -6,16 +6,19 @@ import { gameOf, isReversed, legalReturnPlays, legalTurnPlays, topPlay, type Ctx
 import { weakestStrength } from './hand.ts';
 import type { Action, Awaiting, LegalPlay } from './types.ts';
 
-/** CPU の並べ方（§14.9）。先頭がいちばん選ばれやすい。 */
+/** CPU の並べ方（§14.14 で差し替えた §14.9）。先頭がいちばん選ばれやすい。 */
 export function sortForCpu(plays: readonly LegalPlay[], reversed: boolean): LegalPlay[] {
   return plays.slice().sort((a, b) => {
     if (a.foul !== b.foul) return a.foul ? 1 : -1; // (1) 反則上がりにならない手を先に
+    const ja = a.play.jokers.length > 0;
+    const jb = b.play.jokers.length > 0;
+    if (ja !== jb) return ja ? 1 : -1; // (2) ジョーカーを使わない手を先に（§14.14）
     const wa = weakestStrength(a.play, reversed);
     const wb = weakestStrength(b.play, reversed);
-    if (wa !== wb) return wa < wb ? -1 : 1; // (2) いちばん弱いカードが弱い順
-    if (a.cards.length !== b.cards.length) return b.cards.length - a.cards.length; // (3) 枚数の多い順
-    if (a.shape !== b.shape) return a.shape === 'group' ? -1 : 1; // (4) 組を階段より先に
-    return compareCardLists(a.cards, b.cards); // (5) カードの並び順
+    if (wa !== wb) return wa < wb ? -1 : 1; // (3) いちばん弱いカードが弱い順
+    if (a.cards.length !== b.cards.length) return b.cards.length - a.cards.length; // (4) 枚数の多い順
+    if (a.shape !== b.shape) return a.shape === 'group' ? -1 : 1; // (5) 組を階段より先に
+    return compareCardLists(a.cards, b.cards); // (6) カードの並び順
   });
 }
 

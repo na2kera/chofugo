@@ -53,7 +53,7 @@ export function validateConfig(config: unknown): ConfigError | null {
   const rules = c['rules'];
   if (!Array.isArray(rules)) return { code: 'malformed', message: 'rules must be an array' };
   for (const r of rules) {
-    if (!isRuleId(r)) return { code: 'unknownRule', message: `unknown rule: ${String(r)}` };
+    if (!isRuleId(r)) return { code: 'unknownRule', message: `unknown rule: ${typeof r === 'string' ? r : typeof r}` };
   }
   const ids = rules as RuleId[];
   for (let i = 0; i < ids.length; i++) {

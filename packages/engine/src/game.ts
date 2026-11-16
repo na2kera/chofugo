@@ -7,7 +7,6 @@ import {
   enumerateGroupSets,
   enumerateRunSets,
   interpretations,
-  isJokerSingle,
   strongerRun,
 } from './hand.ts';
 import { activeModules, findModule, type RuleCtx, type RuleModule } from './rules/index.ts';
@@ -301,6 +300,12 @@ function runFlowEffects(c: Ctx, effects: Effect[], source: SeatId): void {
     const e = effects[i] as Effect;
     if (e.type === 'returnRound') {
       const rest = effects.slice(i + 1);
+      // 省く条件は、一周を始める直前の最新の状態で評価し直す（decisions §14.14）
+      const mod = findModule(e.rule);
+      if (mod?.canStartReturnRound !== undefined && !mod.canStartReturnRound(ruleCtx(c), source)) {
+        runFlowEffects(c, [...(mod.onReturnRoundSkipped?.(ruleCtx(c), source) ?? []), ...rest], source);
+        return;
+      }
       const participants: SeatId[] = [];
       for (let k = 1; k < 4; k++) {
         const s = stepSeat(g, source, k);
@@ -308,6 +313,7 @@ function runFlowEffects(c: Ctx, effects: Effect[], source: SeatId): void {
       }
       emit(c, { type: 'returnRoundStart', rule: e.rule, source, participants: participants.slice() });
       g.pending = { type: 'returnRound', rule: e.rule, source, queue: participants, rest };
+      // ここに来るときは残りが2人以上いるので、参加者は必ず1人以上いる（防御のための分岐）
       if (participants.length === 0) {
         finishReturnRound(c, null, null);
         return;
@@ -383,8 +389,8 @@ export function doTurnPlay(c: Ctx, seat: SeatId, play: Play): void {
 
   const effects: Effect[] = [];
   for (const m of c.mods) effects.push(...(m.afterPlay?.(ruleCtx(c), fp, prev) ?? []));
-  // ジョーカーの1枚出しに返す手段がなければ、すぐ場を流す（§2.5）
-  if (isJokerSingle(play) && !effects.some((e) => e.type === 'returnRound' || e.type === 'flush')) {
+  // ジョーカーだけの手（1枚出し・2枚組）に返す手段がなければ、すぐ場を流す（§2.5、§14.14）
+  if (play.shape === 'group' && play.rank === null && !effects.some((e) => e.type === 'returnRound' || e.type === 'flush')) {
     effects.push({ type: 'flush', leader: seat, reason: 'jokerUnbeatable' });
   }
   const sorted = sortEffects(effects);

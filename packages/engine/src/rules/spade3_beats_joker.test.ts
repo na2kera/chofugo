@@ -97,10 +97,11 @@ describe('スペ3返し（decisions §6.5、§6.2、§14.3、§14.7）', () => {
     expect(d.current()).toMatchObject({ seat: 3, kind: 'turn' });
   });
 
-  it('ジョーカー2枚の組では返しの一周に入らない', () => {
+  it('ジョーカー2枚の組では返しの一周に入らず、すぐ場が流れる（§14.14）', () => {
     const d = new Driver(scene({ rules: [...rules], hands: ['X0 X1 S4', 'H5 H6', 'S3 D7', 'C3 CK'], turn: 0 }));
     d.play(0, 'X0 X1');
     expect(d.types()).not.toContain('returnRoundStart');
-    expect(d.current()).toMatchObject({ seat: 1, kind: 'turn' });
+    expect(d.events.find((e) => e.type === 'fieldCleared')).toMatchObject({ reason: 'jokerUnbeatable', leader: 0 });
+    expect(d.current()).toMatchObject({ seat: 0, kind: 'turn' });
   });
 });

@@ -45,9 +45,21 @@ describe('§14.3 上がりが決まる時点', () => {
     expect(types.indexOf('placed')).toBeLessThan(types.indexOf('returnRoundStart'));
   });
 
-  it('1位の確定と都落ちは返しの一周より前に処理し、都落ちした人は一周に参加しない', () => {
+  it('都落ちで♠3が捨て札として公開されたら、返しの一周は行わずにすぐ流す（§14.14）', () => {
     const d = new Driver(
       scene({ rules: ['spade3_beats_joker', 'dethrone'], prevRanks: [3, 4, 1, 2], hands: ['X0', 'H5 H6', 'S3 D4', 'C8 C7'], turn: 0 }),
+    );
+    d.play(0, 'X0');
+    expect(d.places()).toEqual([1, null, 4, null]);
+    expect(d.game.discard).toContain('spade-3');
+    expect(d.types()).not.toContain('returnRoundStart');
+    expect(d.events.find((e) => e.type === 'fieldCleared')).toMatchObject({ reason: 'jokerUnbeatable', leader: 1 });
+    expect(d.current()).toMatchObject({ seat: 1, kind: 'turn' });
+  });
+
+  it('1位の確定と都落ちは返しの一周より前に処理し、都落ちした人は一周に参加しない', () => {
+    const d = new Driver(
+      scene({ rules: ['spade3_beats_joker', 'dethrone'], prevRanks: [3, 4, 1, 2], hands: ['X0', 'S3 H6', 'H5 D4', 'C8 C7'], turn: 0 }),
     );
     d.play(0, 'X0');
     const start = d.events.find((e) => e.type === 'returnRoundStart');
@@ -73,13 +85,14 @@ describe('§14.3 上がりが決まる時点', () => {
     expect(d.current()).toMatchObject({ seat: 3, kind: 'turn' });
   });
 
-  it('返しの一周の参加者が全員抜けていれば一周は不成立で終わる', () => {
+  it('返しの一周では、都落ちで抜けた人を除いた残りの人だけに聞く（参加者が0人になる場面は起きない）', () => {
     const d = new Driver(
       scene({ rules: ['spade3_beats_joker', 'dethrone'], prevRanks: [3, 1, 4, 2], hands: ['X0', 'H5 H6', 'S3', 'C8 C7'], turn: 0 }),
     );
     // 0 の上がりで1位 → 前の大富豪 1 が都落ち → 残りは 2 と 3
     d.play(0, 'X0');
     expect(d.events.find((e) => e.type === 'returnRoundStart')).toMatchObject({ participants: [2, 3] });
+    expect(d.current()).toMatchObject({ seat: 2, kind: 'respond' });
   });
 });
 

@@ -46,6 +46,10 @@ export type RuleModule = {
   onFirstPlace?(ctx: RuleCtx, seat: SeatId): Effect[];
   /** 場が流れたとき（縛り・J バックの解除）。 */
   onFieldCleared?(ctx: RuleCtx): Effect[];
+  /** 返しの一周を持つルール: 一周を始める直前の状態で、一周を行うか（省く条件の評価し直し、§14.14）。 */
+  canStartReturnRound?(ctx: RuleCtx, source: SeatId): boolean;
+  /** 返しの一周を持つルール: 直前で省いたときの効果（残りの効果の前に処理する）。 */
+  onReturnRoundSkipped?(ctx: RuleCtx, source: SeatId): Effect[];
   /** 返しの一周を持つルール: 返しの手が無視する制限の種類。 */
   returnIgnores?: readonly ViolationKind[];
   /** 返しの一周を持つルール: その席が返せる手の候補（制限で絞る前）。 */

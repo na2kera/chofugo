@@ -13,6 +13,13 @@ export const spade3BeatsJoker: RuleModule = {
     if (ctx.isPublic(SPADE3)) return [];
     return [{ type: 'returnRound', rule: 'spade3_beats_joker' }];
   },
+  canStartReturnRound(ctx) {
+    return !ctx.isPublic(SPADE3);
+  },
+  onReturnRoundSkipped(_ctx, source) {
+    // 返す手段がないジョーカーの1枚出しとして、すぐ場を流す（§2.5）
+    return [{ type: 'flush', leader: source, reason: 'jokerUnbeatable' }];
+  },
   // マーク縛り・場の種類と枚数・強さ・自分のパス状態を無視する（§14.7）
   returnIgnores: ['suitLock', 'fieldShape', 'fieldSize', 'notStronger', 'passed'],
   returnOptions(ctx, seat) {
