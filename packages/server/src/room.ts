@@ -33,6 +33,7 @@ import {
   isExpired,
   isBotSeat,
   isCurrentFormat,
+  keepSeatDeadlinesOnRejoin,
   modeHasAbilities,
   needsHeartbeat,
   nextAlarm,
@@ -105,8 +106,12 @@ class Tx {
    * （client が「自分の操作が受理された」を確実に見分けるため。design-2 §6.3、server-assumptions G9）。
    */
   readonly accepted = new Map<WebSocket, ReqId>();
-  /** 期限を秒数いっぱいに付け直す席（復帰した本人）。 */
-  readonly resetSeats = new Set<SeatId>();
+  /**
+   * hello で席に着いた人の期限の扱い（decisions §18.1）。
+   * full = 秒数いっぱいに付け直す（代役からの復帰、新しく席に着いた人）。
+   * keep = 期限を変えない（猶予の中での復帰。残りが短ければ1回だけ延ばす）。
+   */
+  readonly rejoined = new Map<SeatId, 'full' | 'keep'>();
   /** 追記する操作の記録（ゲームの番号ごと）。 */
   readonly logs = new Map<number, LoggedAction[]>();
   clearLogs = false;
@@ -285,7 +290,7 @@ export class Room extends DurableObject<Env> {
   async makeOldFormat(): Promise<boolean> {
     const s = this.load();
     if (s === null || s === 'stale') return false;
-    const old = { ...s, v: 2 };
+    const old = { ...s, v: 3 };
     this.ctx.storage.kv.put(ROOM_KEY, old);
     return true;
   }
@@ -607,6 +612,8 @@ export class Room extends DurableObject<Env> {
     if (seat !== undefined) {
       // 同じ人の復帰。古い接続は閉じる
       const r = seatRec(s, seat);
+      // 代役だったか。全員不在の一時停止中は代役への切り替えが次の入力まで遅れるので、猶予を過ぎていれば代役だったとみなす（settle と同じ条件）
+      const wasAway = r.away || (!r.connected && r.disconnectedAt !== null && tx.now >= r.disconnectedAt + s.timing.disconnectGraceMs);
       for (const o of this.openSockets()) {
         if (o.ws !== ws && o.att.seat === seat) tx.closes.push({ ws: o.ws, code: 4001, reason: 'replaced by a newer connection' });
       }
@@ -615,7 +622,7 @@ export class Room extends DurableObject<Env> {
       r.disconnectedAt = null;
       r.away = false;
       if (s.match === null) r.name = name;
-      tx.resetSeats.add(seat);
+      tx.rejoined.set(seat, wasAway ? 'full' : 'keep');
     } else {
       const phase = s.match?.phase ?? null;
       if (phase === null) {
@@ -635,7 +642,7 @@ export class Room extends DurableObject<Env> {
       }
       const old = seatRec(s, seat);
       s.seats[seat] = { kind: 'human', name, tokenHash, gen: old.gen + 1, connected: true, disconnectedAt: null, away: false };
-      tx.resetSeats.add(seat);
+      tx.rejoined.set(seat, 'full');
     }
     att.seat = seat;
     att.gen = seatRec(s, seat).gen;
@@ -738,9 +745,12 @@ export class Room extends DurableObject<Env> {
     if (connectedHumans(s) === 0) pause(s, now);
     else resume(s, now);
     syncDeadlines(s, now);
-    // 復帰した本人の待ちは秒数いっぱいに付け直す
-    for (const seat of tx.resetSeats) resetSeatDeadlines(s, seat, now);
-    tx.resetSeats.clear();
+    // 席に着いた本人の待ち（decisions §18.1）：代役からの復帰・新しい席は秒数いっぱい、猶予の中の復帰は期限を変えない（短ければ1回だけ延ばす）
+    for (const [seat, how] of tx.rejoined) {
+      if (how === 'full') resetSeatDeadlines(s, seat, now);
+      else keepSeatDeadlinesOnRejoin(s, seat, now);
+    }
+    tx.rejoined.clear();
     ensureHost(s);
     if (needsHeartbeat(s, alive.some((o) => o.att.seat === null))) {
       if (s.hbCheckAt === null) s.hbCheckAt = now + s.timing.heartbeatCheckMs;

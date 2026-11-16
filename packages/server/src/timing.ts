@@ -19,6 +19,10 @@ export type Timing = {
   cpuDelayMs: number;
   /** 切断を検出してから代役に切り替えるまで（10秒）。 */
   disconnectGraceMs: number;
+  /**
+   * 猶予の中でつなぎ直したとき、待ちの残りがこれより短ければ、1つの待ちにつき1回だけ、残りをこの長さにする（10秒、decisions §18.1）。
+   */
+  rejoinMinMs: number;
   /** 自動応答がこの時間なければ切断として扱う（約15秒）。 */
   heartbeatTimeoutMs: number;
   /** 人間の操作を待っている間・結果画面の間に、応答を確かめる間隔（15秒）。 */
@@ -40,6 +44,7 @@ export const DEFAULT_TIMING: Readonly<Timing> = Object.freeze({
   abilityMs: 60_000,
   cpuDelayMs: 1_000,
   disconnectGraceMs: 10_000,
+  rejoinMinMs: 10_000,
   heartbeatTimeoutMs: 15_000,
   heartbeatCheckMs: 15_000,
   pausedCloseMs: 30 * 60_000,

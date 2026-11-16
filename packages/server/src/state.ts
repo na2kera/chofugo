@@ -26,9 +26,10 @@ import { humanTimerMs, type Timing } from './timing.ts';
  * 保存する値の形式の番号（design-2 §3.3）。保存の形が変わったら上げる。
  * 番号の違う保存済みのルームは、失効したルームと同じ扱いにする（再接続を拒否し、保存を消す。decisions §16.6）。
  * 1 = その1、2 = その2（設定の下書きに mode を足した。engine の MatchState も version 2）、
- * 3 = その3（mode に chofugo、engine の MatchState も version 3。design-3 §3.1）。
+ * 3 = その3（mode に chofugo、engine の MatchState も version 3。design-3 §3.1）、
+ * 4 = 期限に「つなぎ直しで1回延ばした」印（extended）と、秒数に rejoinMinMs を足した（decisions §18.1）。
  */
-export const STATE_FORMAT = 3;
+export const STATE_FORMAT = 4;
 
 export type SeatRec = {
   kind: 'empty' | 'human' | 'cpu';
@@ -53,6 +54,11 @@ export type Deadline = {
   at: number | null;
   /** 一時停止中の残り時間。動いている間は null。 */
   remaining: number | null;
+  /**
+   * 猶予の中のつなぎ直しで、残りを rejoinMinMs まで延ばしたことがある（decisions §18.1「1つの待ちにつき1回だけ」）。
+   * 特権で作り直した手番（continues）にも引き継ぐ。
+   */
+  extended: boolean;
 };
 
 export type MatchInit = { matchId: string; config: MatchConfig; seed: [number, number, number, number] };
@@ -240,11 +246,12 @@ export function syncDeadlines(s: RoomState, now: number): void {
   s.deadlines = s.deadlines.filter((d) => ids.has(d.awaitId));
   for (const a of list) {
     if (s.deadlines.some((d) => d.awaitId === a.id)) continue;
-    const d: Deadline = { awaitId: a.id, seat: a.seat, kind: a.kind, timer: a.timer, at: null, remaining: null };
+    const d: Deadline = { awaitId: a.id, seat: a.seat, kind: a.kind, timer: a.timer, at: null, remaining: null, extended: false };
     const prev = a.continues === undefined ? undefined : before.get(a.continues);
     if (prev !== undefined && prev.seat === a.seat && !isBotSeat(s, a.seat)) {
       d.at = prev.at;
       d.remaining = prev.remaining;
+      d.extended = prev.extended;
     } else {
       setDeadlineIn(s, d, durationFor(s, a.seat, a.timer), now);
     }
@@ -253,10 +260,28 @@ export function syncDeadlines(s: RoomState, now: number): void {
   s.deadlines.sort((x, y) => x.awaitId - y.awaitId);
 }
 
-/** 席の待ちの期限を付け直す（代役への切り替え・復帰のとき）。 */
+/** 席の待ちの期限を秒数いっぱいに付け直す（代役への切り替え・代役からの復帰・新しく席に着いたとき）。 */
 export function resetSeatDeadlines(s: RoomState, seat: SeatId, now: number): void {
   for (const d of s.deadlines) {
     if (d.seat === seat) setDeadlineIn(s, d, durationFor(s, seat, d.timer), now);
+  }
+}
+
+/**
+ * 代役になっていない席がつなぎ直したとき（切断の猶予の中での復帰、decisions §18.1）。
+ * 期限は変えない。ただし残りが rejoinMinMs より短いときは、1つの待ちにつき1回だけ、残りを rejoinMinMs にする
+ * （その待ちの秒数より長くはしない）。一時停止中なら残り時間で比べる。
+ */
+export function keepSeatDeadlinesOnRejoin(s: RoomState, seat: SeatId, now: number): void {
+  if (isBotSeat(s, seat)) return;
+  for (const d of s.deadlines) {
+    if (d.seat !== seat || d.extended) continue;
+    const left = d.at !== null ? d.at - now : (d.remaining ?? 0);
+    const min = Math.min(s.timing.rejoinMinMs, humanTimerMs(s.timing, d.timer));
+    if (left < min) {
+      setDeadlineIn(s, d, min, now);
+      d.extended = true;
+    }
   }
 }
 

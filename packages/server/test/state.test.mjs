@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { createMatch } from '@chofugo/engine';
 import { DEFAULT_TIMING } from '../src/timing.ts';
 import { ALL_RULE_IDS } from '@chofugo/engine';
-import { buildMatchConfig, deadlineProblems, initialRoom, isCurrentFormat, modeHasAbilities, normalizeRules, pause, resume, STATE_FORMAT, syncDeadlines } from '../src/state.ts';
+import { buildMatchConfig, deadlineProblems, initialRoom, isCurrentFormat, modeHasAbilities, normalizeRules, keepSeatDeadlinesOnRejoin, pause, resetSeatDeadlines, resume, STATE_FORMAT, syncDeadlines } from '../src/state.ts';
 
 describe('normalizeRules', () => {
   it('モードで選べないルール・前提のないルールを除き、ALL_RULE_IDS の順に並べる', () => {
@@ -38,10 +38,11 @@ describe('保存の形式の番号', () => {
   it('いまの番号だけを受け付ける', () => {
     const s = initialRoom('r', 0, { ...DEFAULT_TIMING });
     expect(s.v).toBe(STATE_FORMAT);
-    expect(STATE_FORMAT).toBe(3);
+    expect(STATE_FORMAT).toBe(4);
     expect(isCurrentFormat(s)).toBe(true);
     expect(isCurrentFormat({ ...s, v: 1 })).toBe(false);
     expect(isCurrentFormat({ ...s, v: 2 })).toBe(false);
+    expect(isCurrentFormat({ ...s, v: 3 })).toBe(false);
     const { v: _v, ...noV } = s;
     expect(isCurrentFormat(noV)).toBe(false);
     expect(isCurrentFormat(null)).toBe(false);
@@ -120,7 +121,7 @@ describe('syncDeadlines の continues（design-3 §6.1）', () => {
     expect(s.deadlines).toMatchObject([{ awaitId: 100, at: 1000 + DEFAULT_TIMING.turnMs }]);
     setTurn(s, 0, 101, 100);
     syncDeadlines(s, 9000);
-    expect(s.deadlines).toEqual([{ awaitId: 101, seat: 0, kind: 'turn', timer: 'turn', at: 1000 + DEFAULT_TIMING.turnMs, remaining: null }]);
+    expect(s.deadlines).toEqual([{ awaitId: 101, seat: 0, kind: 'turn', timer: 'turn', at: 1000 + DEFAULT_TIMING.turnMs, remaining: null, extended: false }]);
     // 期限を過ぎていても、そのまま引き継ぐ（すぐに時間切れの auto が出る）
     setTurn(s, 0, 102, 101);
     syncDeadlines(s, 40_000);
@@ -177,5 +178,70 @@ describe('syncDeadlines の continues（design-3 §6.1）', () => {
     expect(s.deadlines[0]).toMatchObject({ awaitId: 200, at: 1000 + DEFAULT_TIMING.abilityMs });
     syncDeadlines(s, 30_000);
     expect(s.deadlines[0]).toMatchObject({ awaitId: 200, at: 1000 + DEFAULT_TIMING.abilityMs });
+  });
+});
+
+describe('つなぎ直したときの期限（decisions §18.1）', () => {
+  const setup = () => {
+    const s = initialRoom('r', 0, { ...DEFAULT_TIMING });
+    s.pausedAt = null;
+    s.seats[0] = { ...s.seats[0], kind: 'human', name: 'A', connected: true };
+    const r = createMatch({ matchId: 'm', rules: [...ALL_RULE_IDS], gameCount: 5, abilities: true }, [1, 2, 3, 4]);
+    if (!r.ok) throw new Error('createMatch');
+    s.match = r.state;
+    s.match.game.awaiting = [{ id: 100, seat: 0, kind: 'turn', timer: 'turn' }];
+    syncDeadlines(s, 1000);
+    return s;
+  };
+  const T = DEFAULT_TIMING.turnMs;
+  const M = DEFAULT_TIMING.rejoinMinMs;
+
+  it('残りが rejoinMinMs 以上なら期限を変えない', () => {
+    const s = setup();
+    keepSeatDeadlinesOnRejoin(s, 0, 1000 + T - M);
+    expect(s.deadlines[0]).toMatchObject({ at: 1000 + T, extended: false });
+  });
+
+  it('残りが短いときは1回だけ rejoinMinMs に延ばし、2回目は延ばさない', () => {
+    const s = setup();
+    const now1 = 1000 + T - 3000;
+    keepSeatDeadlinesOnRejoin(s, 0, now1);
+    expect(s.deadlines[0]).toMatchObject({ at: now1 + M, extended: true });
+    keepSeatDeadlinesOnRejoin(s, 0, now1 + M - 1000);
+    expect(s.deadlines[0]).toMatchObject({ at: now1 + M, extended: true });
+    // 期限を過ぎていても（アラームがまだ鳴っていない）延ばさない
+    keepSeatDeadlinesOnRejoin(s, 0, now1 + M + 500);
+    expect(s.deadlines[0].at).toBe(now1 + M);
+  });
+
+  it('印は特権で作り直した手番（continues）に引き継ぐ', () => {
+    const s = setup();
+    keepSeatDeadlinesOnRejoin(s, 0, 1000 + T - 1000);
+    const at = s.deadlines[0].at;
+    s.match.game.awaiting = [{ id: 101, seat: 0, kind: 'turn', timer: 'turn', continues: 100 }];
+    syncDeadlines(s, 1000 + T);
+    expect(s.deadlines[0]).toMatchObject({ awaitId: 101, at, extended: true });
+    keepSeatDeadlinesOnRejoin(s, 0, at - 500);
+    expect(s.deadlines[0].at).toBe(at);
+  });
+
+  it('一時停止中は残り時間で比べる。延ばす長さはその待ちの秒数を超えない', () => {
+    const s = setup();
+    pause(s, 1000 + T - 2000);
+    keepSeatDeadlinesOnRejoin(s, 0, 1000 + T);
+    expect(s.deadlines[0]).toMatchObject({ at: null, remaining: M, extended: true });
+    s.timing = { ...s.timing, rejoinMinMs: 60_000 };
+    s.pausedAt = null;
+    s.match.game.awaiting = [{ id: 102, seat: 0, kind: 'respond', timer: 'respond' }];
+    syncDeadlines(s, 5000);
+    keepSeatDeadlinesOnRejoin(s, 0, 5000 + 3000);
+    // rejoinMinMs（60秒）ではなく、返しの一周の秒数（10秒）まで
+    expect(s.deadlines[0]).toMatchObject({ awaitId: 102, at: 5000 + 3000 + DEFAULT_TIMING.respondMs, extended: true });
+  });
+
+  it('代役からの復帰（resetSeatDeadlines）は秒数いっぱい', () => {
+    const s = setup();
+    resetSeatDeadlines(s, 0, 20_000);
+    expect(s.deadlines[0].at).toBe(20_000 + T);
   });
 });

@@ -1,5 +1,5 @@
 // その2：7渡しの選択（choice の待ち）の時間切れ・CPU・代役、7渡しの中身の見え方、choose の不正な入力、
-// 選択の途中の全員不在と復帰（design-2 §3.2、§3.5、§6.5、server-assumptions B4）。
+// 選択の途中の全員不在と復帰（design-2 §3.2、§3.5、§6.5、server-assumptions B4、decisions §18.1）。
 // 場面はでたらめな配りに頼らない：種を固定したルーム（テスト用の機能）を作り、人間の席は決まった操作だけをする。
 // 1ゲーム目の流れは engine だけで前もって再現できるので（scenario.mjs）、必要な出来事が起きる種を探してから試す。
 
@@ -281,15 +281,14 @@ describe('choose の不正な入力と、選択の途中の全員不在（WebSoc
     expect(dBack.at).toBeGreaterThan(dBefore.at);
     expect(dBack.at - back.serverTime).toBeLessThanOrEqual(choiceMs - elapsed);
     expect(elapsed).toBeGreaterThanOrEqual(1000);
-    // A も戻る：戻った本人の待ちは秒数いっぱいに付け直す（B2）。続きの残り（秒数 − 1秒以上）より長い
+    // A も戻る：A は代役になっていない（猶予の中の復帰）ので、期限は変えない（decisions §18.1。残りは rejoinMinMs の10秒より長い）
     const A2 = new DetClient(server.base, roomId, { name: 'A', token: A.token, hold: true });
     await A2.connect();
     A2.hello();
     const aBack = await A2.waitState((s) => s.seat === 0 && s.eventsFull, WAIT, 'A back');
     const dA = aBack.deadlines.find((d) => d.awaitId === mine.awaitId);
-    expect(dA.at - aBack.serverTime).toBeLessThanOrEqual(choiceMs);
-    expect(dA.at - aBack.serverTime).toBeGreaterThan(choiceMs - elapsed);
-    expect(dA.at).toBeGreaterThan(dBack.at);
+    expect(dA.at - aBack.serverTime).toBeGreaterThan(10_000);
+    expect(dA.at).toBe(dBack.at);
     expect(aBack.view.mine).toMatchObject({ kind: 'choice', awaitId: mine.awaitId });
 
     // 正しい choose は受け付ける。受け付けた state にだけ、その reqId が付く（acceptedReqId、G9）

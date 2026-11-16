@@ -16,7 +16,7 @@ export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * テストの開発サーバーのポート（19480〜19489）。インスペクターはその +10（19490〜19499）。
  * 同じ機械の別のプロジェクトと衝突しないよう、この範囲だけを使う。
  */
-export const PORTS = { match: 19480, cpu: 19481, connection: 19482, restart: 19483, prod: 19484, review: 19485, custom: 19486, choice: 19487, chofugo: 19488, chofugo2: 19489 };
+export const PORTS = { match: 19480, cpu: 19481, connection: 19482, restart: 19483, prod: 19484, review: 19485, custom: 19486, choice: 19487, chofugo: 19488, chofugo2: 19489, rejoin: 19490 };
 
 /** 開発サーバーを起動する。persistDir を渡すと、止めて起動し直しても同じストレージを使う。 */
 /** testMode: false なら CHOFUGO_TEST_MODE を渡さない（本番と同じ設定で起動する）。 */
