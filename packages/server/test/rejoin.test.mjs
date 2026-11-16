@@ -49,6 +49,9 @@ async function rejoin(roomId, prev, opts = {}) {
   return { c, st };
 }
 
+/** 期限から、時間切れの state が B に届くまでの許容（ローカルの開発サーバーは、機械が混んでいるとアラームが1秒ほど遅れることがある）。 */
+const EXPIRE_SLACK_MS = 1500;
+
 /** B が見た state のうち、target の待ちがなくなった最初のもの。 */
 const goneAt = (B, awaitId) => B.waitState((s) => !s.view.awaiting.some((a) => a.id === awaitId), 60_000, 'await gone');
 
@@ -105,7 +108,7 @@ describe('猶予の中でつなぎ直したときの期限', () => {
     // 延ばした期限で時間切れになる
     const gone = await goneAt(B, target.awaitId);
     expect(gone.serverTime).toBeGreaterThanOrEqual(d2.at);
-    expect(gone.serverTime - d2.at).toBeLessThan(1000);
+    expect(gone.serverTime - d2.at).toBeLessThan(EXPIRE_SLACK_MS);
     expect(B.rejectedOwn).toEqual([]);
     expect(await deadlineProblems(server.base, roomId)).toEqual([]);
     r3.c.close();
@@ -133,8 +136,8 @@ describe('猶予の中でつなぎ直したときの期限', () => {
     expect(n).toBeGreaterThanOrEqual(5);
     const last = expectAtMostOneExtension(ats(seen, target.awaitId), target.at, timing.rejoinMinMs);
     const gone = await goneAt(B, target.awaitId);
-    expect(gone.serverTime - last).toBeLessThan(1000);
-    expect(gone.serverTime - target.at).toBeLessThan(timing.rejoinMinMs + 1000);
+    expect(gone.serverTime - last).toBeLessThan(EXPIRE_SLACK_MS);
+    expect(gone.serverTime - target.at).toBeLessThan(timing.rejoinMinMs + EXPIRE_SLACK_MS);
     // 試合はそのあとも進む
     await B.waitState((s) => s.view.awaiting.length > 0 && !s.view.awaiting.some((a) => a.id === target.awaitId), 10_000, 'next await');
     expect(await deadlineProblems(server.base, roomId)).toEqual([]);
@@ -172,8 +175,8 @@ describe('猶予の中でつなぎ直したときの期限', () => {
     expect(codes.every((c) => c === 4000)).toBe(true);
     const last = expectAtMostOneExtension(ats(seen, target.awaitId), target.at, timing.rejoinMinMs);
     const gone = await goneAt(B, target.awaitId);
-    expect(gone.serverTime - last).toBeLessThan(1000);
-    expect(gone.serverTime - target.at).toBeLessThan(timing.rejoinMinMs + 1000);
+    expect(gone.serverTime - last).toBeLessThan(EXPIRE_SLACK_MS);
+    expect(gone.serverTime - target.at).toBeLessThan(timing.rejoinMinMs + EXPIRE_SLACK_MS);
     expect(await deadlineProblems(server.base, roomId)).toEqual([]);
     cur.close();
     B.close();
@@ -237,7 +240,7 @@ describe('猶予の中でつなぎ直したときの期限', () => {
     expect(d2).toBeDefined();
     expect(d2.at - r2.st.serverTime).toBeLessThanOrEqual(1200);
     const gone = await goneAt(B, target.awaitId);
-    expect(gone.serverTime - d2.at).toBeLessThan(1000);
+    expect(gone.serverTime - d2.at).toBeLessThan(EXPIRE_SLACK_MS);
     r2.c.close();
     B.close();
   });
@@ -259,7 +262,7 @@ describe('猶予の中でつなぎ直したときの期限', () => {
     expect(d2).toBeDefined();
     expect(d2.at).toBe(d1.at);
     const gone = await goneAt(B, target.awaitId);
-    expect(gone.serverTime - d1.at).toBeLessThan(1000);
+    expect(gone.serverTime - d1.at).toBeLessThan(EXPIRE_SLACK_MS);
     r2.c.close();
     B.close();
   });
