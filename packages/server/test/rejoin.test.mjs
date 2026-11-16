@@ -89,7 +89,10 @@ describe('猶予の中でつなぎ直したときの期限', () => {
     expect(d2).toBeDefined();
     expect(target.at - r2.st.serverTime).toBeLessThan(timing.rejoinMinMs);
     // 2回目の復帰：残りを rejoinMinMs にする
-    expect(d2.at).toBe(r2.st.serverTime + timing.rejoinMinMs);
+    // （serverTime は送る時点の時刻なので、処理の時刻より数ミリ秒遅れることがある）
+    expect(d2.at).toBeLessThanOrEqual(r2.st.serverTime + timing.rejoinMinMs);
+    expect(d2.at).toBeGreaterThan(r2.st.serverTime + timing.rejoinMinMs - 100);
+    expect(d2.at).toBeGreaterThan(target.at);
     // 残りがまた短くなってから3回目：延ばさない
     await sleep(Math.max(0, d2.at - r2.st.serverTime - 1500));
     r2.c.close();
