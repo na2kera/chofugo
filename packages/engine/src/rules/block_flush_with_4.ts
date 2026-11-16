@@ -27,6 +27,7 @@ export const blockFlushWith4: RuleModule = {
     // 8切りの flush は flush_on_8 が返す。列は returnRound → flush の順になる
     return [{ type: 'returnRound', rule: 'block_flush_with_4' }];
   },
+  returnRank: 4,
   canStartReturnRound(ctx) {
     return !cannotBeReturned(ctx);
   },

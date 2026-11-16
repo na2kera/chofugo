@@ -454,40 +454,36 @@ describe('独裁（§5.6、§14.7、§14.8、§17.5）', () => {
     expect(viewFor(d.state, 0).mine).toMatchObject({ canPass: true });
   });
 
-  it('3を封じると、スペ3返しの一周は始まるが、スペードの3では返せない（全員スキップで不成立）', () => {
+  it('3を封じると、スペ3返しの一周は行わず、すぐ場が流れてジョーカーを出した人が親', () => {
     const d = sc(['spade3_beats_joker'], ['X0 S5', 'S3 H4', 'D3 D4', 'C3 C4'], ['ban']);
     d.use(0, 'ban', { rank: 3 });
     const ev = d.play(0, 'X0');
-    expect(ev.map((e) => e.type)).toEqual(['play', 'returnRoundStart']);
-    expect(d.current()).toMatchObject({ seat: 1, kind: 'respond' });
-    expect(legalPlays(d.state, 1)).toEqual([]);
-    expect(viewFor(d.state, 1).mine).toMatchObject({ kind: 'respond', plays: [] });
-    const r = d.try({ type: 'respond', seat: 1, awaitId: d.current().id, cards: cs('S3') });
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error.code).toBe('invalidResponse');
-    d.respond(1, null);
-    d.respond(2, null);
-    d.respond(3, null);
-    expect(d.events.at(-1)).toMatchObject({ type: 'fieldCleared', reason: 'returnFailed', leader: 0 });
+    expect(ev.map((e) => e.type)).toEqual(['play', 'fieldCleared']);
+    expect(ev[1]).toMatchObject({ reason: 'jokerUnbeatable', leader: 0 });
+    expect(d.current()).toMatchObject({ seat: 0, kind: 'turn' });
     expect(d.game.ban).toBeNull();
   });
 
-  it('4を封じると、4止めの一周は始まるが、4の2枚では返せない（8切りで流れる）', () => {
+  it('4を封じると、4止めの一周は行わず8切りで流れる', () => {
     const d = sc(['flush_on_8', 'block_flush_with_4'], ['S5 S6', 'H8 H9', 'D4 C4 D9', 'C3 C9'], ['ban']);
     d.use(0, 'ban', { rank: 4 });
     d.play(0, 'S5');
-    d.play(1, 'H8');
-    expect(d.events.at(-1)).toMatchObject({ type: 'returnRoundStart', rule: 'block_flush_with_4' });
-    expect(d.current()).toMatchObject({ seat: 2, kind: 'respond' });
-    expect(legalPlays(d.state, 2)).toEqual([]);
-    const r = d.try({ type: 'respond', seat: 2, awaitId: d.current().id, cards: cs('D4 C4') });
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error.code).toBe('invalidResponse');
-    d.respond(2, null);
-    d.respond(3, null);
-    d.respond(0, null);
-    expect(d.events.at(-1)).toMatchObject({ type: 'fieldCleared', reason: 'flush_on_8', leader: 1 });
+    const ev = d.play(1, 'H8');
+    expect(ev.map((e) => e.type)).toEqual(['play', 'fieldCleared']);
+    expect(ev[1]).toMatchObject({ reason: 'flush_on_8', leader: 1 });
     expect(d.game.ban).toBeNull();
+  });
+
+  it('封じた数字が別（5）なら、これまでどおり返しの一周を行う', () => {
+    const d = sc(['spade3_beats_joker'], ['X0 S6', 'S3 H4', 'D3 D4', 'C3 C4'], ['ban']);
+    d.use(0, 'ban', { rank: 5 });
+    expect(d.play(0, 'X0').map((e) => e.type)).toEqual(['play', 'returnRoundStart']);
+    expect(legalPlays(d.state, 1).map((p) => p.cards)).toEqual([cs('S3')]);
+    const f = sc(['flush_on_8', 'block_flush_with_4'], ['S5 S6', 'H8 H9', 'D4 C4 D9', 'C3 C9'], ['ban']);
+    f.use(0, 'ban', { rank: 5 });
+    f.play(0, 'S6');
+    expect(f.play(1, 'H8').at(-1)).toMatchObject({ type: 'returnRoundStart', rule: 'block_flush_with_4' });
+    expect(legalPlays(f.state, 2).map((p) => p.cards)).toEqual([cs('D4 C4')]);
   });
 
   it('砂嵐も封じた数字なら出せない', () => {
@@ -834,5 +830,55 @@ describe('ability のフェーズ（design-3 §6.5）', () => {
     if (!off.ok) throw new Error();
     expect(off.state.config.abilities).toBe(false);
     expect(off.state.abilityGrant).toBeNull();
+  });
+});
+
+describe('外から来た不正な値（文字列にできない値）', () => {
+  const evil = { toString: null } as unknown;
+  const evil2 = { toString: 0 } as unknown;
+  it('selectAbilities・useAbility・play などに入れても例外を投げず、状態と乱数を変えない', () => {
+    const { s } = toAbilityPhase();
+    const holder = s.game!.abilities!.holder;
+    const id = awaiting(s)[0]!.id;
+    const check = (st: MatchState, a: unknown) => {
+      const before = JSON.stringify(st);
+      let r: ReturnType<typeof applyAction> | undefined;
+      expect(() => (r = applyAction(st, a as Action))).not.toThrow();
+      expect(r!.ok).toBe(false);
+      expect(JSON.stringify(st)).toBe(before);
+    };
+    for (const v of [evil, evil2]) {
+      check(s, { type: 'selectAbilities', seat: holder, awaitId: id, abilities: [v], confirm: true });
+      check(s, { type: 'selectAbilities', seat: holder, awaitId: id, abilities: ['ban', v], confirm: false });
+    }
+    const d = sc(['spade3_beats_joker', 'give_on_7'], ['X0 S7 S5 S6', 'S3 H4', 'D3 D4', 'C3 C4'], ['peek', 'steal', 'ban']);
+    const w = d.current().id;
+    for (const v of [evil, evil2]) {
+      check(d.state, { type: 'useAbility', seat: 0, awaitId: w, ability: v });
+      check(d.state, { type: 'useAbility', seat: 0, awaitId: w, ability: 'peek', target: v });
+      check(d.state, { type: 'useAbility', seat: 0, awaitId: w, ability: 'steal', target: 1, card: v });
+      check(d.state, { type: 'useAbility', seat: 0, awaitId: w, ability: 'ban', rank: v });
+      check(d.state, { type: 'play', seat: 0, awaitId: w, cards: [v] });
+      check(d.state, { type: 'play', seat: 0, awaitId: v, cards: ['joker-0'] });
+      check(d.state, { type: 'play', seat: v, awaitId: w, cards: ['joker-0'] });
+    }
+    d.play(0, 'X0');
+    const r = d.current();
+    for (const v of [evil, evil2]) check(d.state, { type: 'respond', seat: r.seat, awaitId: r.id, cards: [v] });
+    const e = sc(['give_on_7'], ['S7 S5 S6', 'H3 H4', 'D3 D4', 'C3 C4'], []);
+    e.play(0, 'S7');
+    for (const v of [evil, evil2]) check(e.state, { type: 'choose', seat: 0, awaitId: e.current().id, cards: [v] });
+    // 交換
+    const created = createMatch({ matchId: 'm', rules: [...ALL_RULE_IDS], gameCount: 5, abilities: true }, [5, 6, 7, 8]);
+    if (!created.ok) throw new Error();
+    let x = created.state;
+    for (let i = 0; i < 3000 && x.phase !== 'exchange'; i++) {
+      const a: Action = x.phase === 'gameResult' ? { type: 'nextGame' } : { type: 'auto', awaitId: awaiting(x)[0]!.id, policy: 'cpu' };
+      const rr = applyAction(x, a);
+      if (!rr.ok) throw new Error();
+      x = rr.state;
+    }
+    const ew = awaiting(x)[0]!;
+    for (const v of [evil, evil2]) check(x, { type: 'exchangeGive', seat: ew.seat, awaitId: ew.id, cards: [v, v] });
   });
 });

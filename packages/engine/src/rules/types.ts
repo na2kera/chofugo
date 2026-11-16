@@ -1,6 +1,6 @@
 // ルールモジュールの形（design §3.7）。中心の処理は、登録されたモジュールに問い合わせるだけにする。
 
-import type { CardId } from '../cards.ts';
+import type { CardId, Rank } from '../cards.ts';
 import type {
   Effect,
   LeaderRule,
@@ -65,6 +65,8 @@ export type RuleModule = {
   canStartReturnRound?(ctx: RuleCtx, source: SeatId): boolean;
   /** 返しの一周を持つルール: 直前で省いたときの効果（残りの効果の前に処理する）。 */
   onReturnRoundSkipped?(ctx: RuleCtx, source: SeatId): Effect[];
+  /** 返しの一周を持つルール: 返しに使う数字。独裁でこの数字が封じられていれば、一周を省く（design-3、decisions §17.5）。 */
+  returnRank?: Rank;
   /** 返しの一周を持つルール: 返したカードを場ではなく捨て札に置く（4止め）。 */
   returnToDiscard?: boolean;
   /** 返しの一周を持つルール: 返しの手が無視する制限の種類。 */

@@ -118,7 +118,7 @@ export function doSelectAbilities(c: Ctx, w: Awaiting, abilities: unknown, confi
   if (a === null || a.holder !== w.seat || a.chosen !== null) return err('wrongAwaitKind', 'nothing to select');
   if (!isAbilityList(abilities)) return err('malformed', 'abilities must be a list');
   if (typeof confirm !== 'boolean') return err('malformed', 'confirm must be a boolean');
-  for (const id of abilities) if (!isAbilityId(id)) return err('invalidAbility', `unknown ability: ${String(id)}`);
+  for (const id of abilities) if (!isAbilityId(id)) return err('invalidAbility', 'unknown ability');
   const ids = abilities as AbilityId[];
   if (new Set(ids).size !== ids.length) return err('invalidAbility', 'duplicate abilities');
   if (ids.length > a.slots) return err('invalidAbility', `at most ${a.slots} abilities`);
@@ -218,7 +218,7 @@ export function doUseAbility(c: Ctx, w: Awaiting, args: UseArgs): ActionError | 
   const g = gameOf(c);
   const seat = w.seat;
   if (typeof args.ability !== 'string') return err('malformed', 'ability must be a string');
-  if (!isAbilityId(args.ability)) return err('invalidAbility', `unknown ability: ${args.ability}`);
+  if (!isAbilityId(args.ability)) return err('invalidAbility', 'unknown ability');
   const id = args.ability;
   if (id === 'skip') return err('invalidAbility', 'skip is attached to a play (withSkip)');
   if (!hasUnused(g, seat, id)) return err('invalidAbility', `seat ${seat} has no unused ${id}`);

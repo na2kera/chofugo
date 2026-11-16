@@ -416,7 +416,9 @@ export function runEffects(c: Ctx, source: SeatId, effects: readonly Effect[]): 
         const rest = effects.slice(i + 1);
         // 省く条件は、一周を始める直前の最新の状態で評価し直す（decisions §14.14）
         const mod = findModule(e.rule);
-        if (mod?.canStartReturnRound !== undefined && !mod.canStartReturnRound(ruleCtx(c), source)) {
+        // 独裁で返しに使う数字が封じられていれば、返せないことが全員に分かるので省く（特権なしでは ban はいつも null）
+        const banned = mod?.returnRank !== undefined && g.ban === mod.returnRank;
+        if (banned || (mod?.canStartReturnRound !== undefined && !mod.canStartReturnRound(ruleCtx(c), source))) {
           runEffects(c, source, [...(mod.onReturnRoundSkipped?.(ruleCtx(c), source) ?? []), ...rest]);
           return;
         }
