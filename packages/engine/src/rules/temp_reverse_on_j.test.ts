@@ -21,11 +21,12 @@ describe('J バック（decisions §6.4）', () => {
   });
 
   it('J バック中にもう一度 J が出ても変わらない', () => {
-    const d = new Driver(scene({ rules: ['temp_reverse_on_j'], hands: ['SJ S4', 'H10 HJ', 'D9 D7', 'C3 CK'], turn: 0 }));
+    const d = new Driver(scene({ rules: ['temp_reverse_on_j'], tempReverse: true, hands: ['SJ S4', 'H10 HJ', 'D9 D7', 'C3 CK'], turn: 0 }));
     d.play(0, 'SJ');
-    // 逆なので J の上に J は出せない（同じ強さ）。10 は出せる
+    expect(d.game.tempReverse).toBe(true);
+    expect(d.types()).not.toContain('tempReverse');
+    // 逆のままなので、J の上に 10 が出せる
     d.play(1, 'H10');
-    expect(d.events.filter((e) => e.type === 'tempReverse')).toHaveLength(1);
   });
 
   it('革命中の J バックは通常の向きになる', () => {

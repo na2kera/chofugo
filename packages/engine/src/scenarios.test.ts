@@ -96,18 +96,14 @@ describe('§14.4 禁止上がりの判定と、反則のときの効果', () => 
 
 describe('§14.6 ジョーカーの解釈を決める時点', () => {
   it('出した時点の解釈を記録し、あとで向きが変わっても変えない', () => {
-    const d = new Driver(
-      scene({ rules: ['runs', 'revolution'], hands: ['S5 S6 X0 H9', 'D8 D9 D10 DJ C4', 'C3', 'H4'], turn: 0 }),
-    );
-    d.play(0, 'S5 S6 X0');
-    const before = structuredLike(d.game.field[0]);
+    const d = new Driver(scene({ rules: ['runs', 'revolution'], hands: ['S5 S6 S7 X0 H9', 'D8 D9', 'C3', 'H4'], turn: 0 }));
+    // 通常の向きでいちばん強い解釈は 5-6-7-8（ジョーカーは 8）。4枚の階段なので革命が起きて向きが逆になる
+    d.play(0, 'S5 S6 S7 X0');
+    expect(d.game.revolution).toBe(true);
+    // 逆の向きで読み直すなら 4-5-6-7 になるはずだが、記録は変わらない
+    expect(d.game.field[0]?.play).toMatchObject({ low: 5, high: 8, jokers: [{ card: 'joker-0', rank: 8, suit: 'spade' }] });
     d.pass(1);
-    d.pass(2);
-    d.pass(3);
-    d.play(0, 'H9');
-    expect(d.game.field).toHaveLength(1);
-    // 0 の階段は捨て札へ。記録されていた解釈は 5-6-7
-    expect(before).toMatchObject({ play: { low: 5, high: 7, jokers: [{ rank: 7 }] } });
+    expect(d.game.field[0]?.play).toMatchObject({ low: 5, high: 8, jokers: [{ rank: 8 }] });
   });
 
   it('縛りは、比べる2つの手のどちらかにジョーカーが含まれていれば成立しない', () => {
@@ -129,10 +125,6 @@ describe('§14.7 返しの一周が無視する制限と守る制限', () => {
     expect(d.events.find((e) => e.type === 'returnRoundStart')).toMatchObject({ participants: [1, 3] });
   });
 });
-
-function structuredLike<T>(v: T): T {
-  return JSON.parse(JSON.stringify(v)) as T;
-}
 
 describe('§2.4 親が出せる手を持たないとき（その1のルールだけでは起きないため、中心の処理を直接確かめる）', () => {
   it('出せる手がない親はパスでき、場が流れた扱いになって次の人が親になる', async () => {
