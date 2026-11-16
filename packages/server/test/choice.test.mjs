@@ -25,11 +25,21 @@ class SevenClient extends Client {
     this.paused = false;
     /** ゲームの結果の画面で次のゲームを配らない（試合を終えるため）。 */
     this.noNext = false;
+    /** 真を返したら、その state で操作する前に止まる（次のゲームを配る前に止めるため）。 */
+    this.pauseWhen = null;
     this.auto = true;
   }
 
+  checkPause() {
+    if (!this.paused && this.pauseWhen?.()) {
+      this.paused = true;
+      this.pauseWhen = null;
+    }
+    return this.paused;
+  }
+
   maybeAct() {
-    if (this.paused) return;
+    if (this.checkPause()) return;
     const mine = this.state?.view?.mine;
     if (!mine || this.acted.has(mine.awaitId)) return;
     if (mine.kind === 'choice' && this.hold) return;
@@ -46,7 +56,7 @@ class SevenClient extends Client {
   }
 
   maybeNextGame() {
-    if (!this.paused && !this.noNext) super.maybeNextGame();
+    if (!this.checkPause() && !this.noNext) super.maybeNextGame();
   }
 
   resume() {
@@ -99,19 +109,18 @@ describe('7渡しの選択', () => {
 
     // (4) 復帰したときの全件の配信：ゲームを止めて、同じ本人確認の値でつなぎ直す
     //     （止める前に、CPU どうしの give と自分への give が同じゲームの中で起きるまで待つ）
+    // 止める判断は、その state で操作する（次のゲームを配る）前に行う
     let target = null;
-    await me.waitFor(() => {
+    me.pauseWhen = () => {
       const g = me.state?.view?.gameNo;
       const evs = eventsOf(all).filter((e) => e.gameNo === g && e.type === 'give');
       const a = evs.find((e) => e.from !== 0 && e.to !== 0);
       const b = evs.find((e) => e.to === 0);
-      if (a && b && me.state.matchId) {
-        me.paused = true;
-        target = { gameNo: g, a, b };
-        return true;
-      }
-      return undefined;
-    }, 240_000, 'gives in one game');
+      if (a && b) target = { gameNo: g, a, b };
+      return target !== null;
+    };
+    me.checkPause();
+    await me.waitFor(() => (me.paused ? true : undefined), 240_000, 'gives in one game');
     const me2 = new SevenClient(server.base, roomId, { name: 'me', token: me.token, hold: true, autoHost: true });
     me2.paused = true;
     await me2.connect();
