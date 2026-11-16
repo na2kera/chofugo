@@ -3,6 +3,7 @@
 import { STANDARD_DECK, sortCardIds, type CardId } from './cards.ts';
 import { deepClone } from './clone.ts';
 import { decideAuto } from './auto.ts';
+import { canSkipPlay, doSelectAbilities, doUseAbility, prunePeek } from './abilities.ts';
 import { giveCards, exchangeTaskFor, isValidExchangeGive, startExchange } from './exchange.ts';
 import {
   applyStarterRules,
@@ -27,6 +28,7 @@ import { isValidSeed, nextInt, rngFromSeed, shuffleInPlace, type Seed } from './
 import {
   ALL_RULE_IDS,
   SEATS,
+  isAwaitPhase,
   type Action,
   type ActionError,
   type ActionErrorCode,
@@ -69,6 +71,12 @@ export function validateConfig(config: unknown): ConfigError | null {
   }
   const gc = c['gameCount'];
   if (gc !== 5 && gc !== 10 && gc !== null) return { code: 'invalidGameCount', message: 'gameCount must be 5, 10 or null' };
+  const ab = c['abilities'];
+  if (ab !== undefined && typeof ab !== 'boolean') return { code: 'malformed', message: 'abilities must be a boolean' };
+  // 超富豪モードでは都落ちが必須（decisions §4.1、design-3 §2.7）
+  if (ab === true && !ids.includes('dethrone')) {
+    return { code: 'missingRequirement', rule: 'dethrone', message: 'abilities requires dethrone' };
+  }
   return null;
 }
 
@@ -79,9 +87,14 @@ export function createMatch(config: MatchConfig, seed: Seed): CreateMatchResult 
   const err = validateConfig(config);
   if (err !== null) return { ok: false, error: err };
   if (!isValidSeed(seed)) return { ok: false, error: { code: 'invalidSeed', message: 'seed must be four uint32 values, not all zero' } };
-  const cfg: MatchConfig = { matchId: config.matchId, rules: config.rules.slice(), gameCount: config.gameCount };
+  const cfg: MatchConfig = {
+    matchId: config.matchId,
+    rules: config.rules.slice(),
+    gameCount: config.gameCount,
+    abilities: config.abilities === true,
+  };
   const state: MatchState = {
-    version: 2,
+    version: 3,
     matchId: cfg.matchId,
     config: cfg,
     rng: rngFromSeed(seed),
@@ -93,6 +106,7 @@ export function createMatch(config: MatchConfig, seed: Seed): CreateMatchResult 
     results: [],
     nextAwaitId: 1,
     nextEventSeq: 1,
+    abilityGrant: null,
   };
   const c = makeCtx(state);
   startGame(c);
@@ -140,6 +154,11 @@ function startGame(c: Ctx): void {
     firstPlaceHandCounts: null,
     exchange: null,
     starter,
+    abilities: null,
+    ban: null,
+    peek: null,
+    revolutionBy: null,
+    turnCount: [0, 0, 0, 0],
   };
   s.game = game;
   s.phase = 'play';
@@ -172,7 +191,7 @@ function isCardList(v: unknown): v is CardId[] {
 /** いま待っている操作（並行して複数あり得る）。 */
 export function awaiting(state: MatchState): Awaiting[] {
   if (state.game === null) return [];
-  if (state.phase !== 'play' && state.phase !== 'exchange') return [];
+  if (!isAwaitPhase(state.phase)) return [];
   return state.game.awaiting.map((a) => ({ ...a }));
 }
 
@@ -185,6 +204,7 @@ export function applyAction(state: MatchState, action: Action): ApplyResult {
   const c = makeCtx(draft);
   const r = dispatch(c, action, false);
   if (r !== null) return { ok: false, error: r };
+  prunePeek(draft.game); // 透視で見たカードのうち、対象の手札を離れたものを消す（§17.3）
   return { ok: true, state: draft, events: c.events };
 }
 
@@ -197,7 +217,7 @@ function checkAwait(c: Ctx, seat: unknown, awaitId: unknown, kind: Awaiting['kin
   if (!isSeat(seat)) return err('malformed', 'seat must be 0..3');
   if (typeof awaitId !== 'number') return err('malformed', 'awaitId must be a number');
   const g = c.s.game;
-  if (g === null || (c.s.phase !== 'play' && c.s.phase !== 'exchange')) return err('wrongPhase', 'no game in progress');
+  if (g === null || !isAwaitPhase(c.s.phase)) return err('wrongPhase', 'no game in progress');
   const w = g.awaiting.find((a) => a.id === awaitId);
   if (w === undefined) return err('staleAwait', `await ${awaitId} is not active`);
   if (w.seat !== seat) return err('notYourAwait', `await ${awaitId} is not for seat ${seat}`);
@@ -226,10 +246,13 @@ function dispatch(c: Ctx, a: Action, fromAuto: boolean): ActionError | null {
         if (r.reason === 'illegalPlay') return err('illegalPlay', `cannot play: ${r.violation}`, { violation: r.violation });
         return err(r.reason, r.reason);
       }
+      if (a.withSkip !== undefined && typeof a.withSkip !== 'boolean') return err('malformed', 'withSkip must be a boolean');
+      const withSkip = a.withSkip === true;
+      if (withSkip && !canSkipPlay(c, w.seat, r.play)) return err('cannotSkip', 'skip cannot be attached to this play');
       if (isFoulFinish(c, w.seat, r.play) && a.confirmFoul !== true) {
         return err('confirmFoulRequired', 'this play is a foul finish; set confirmFoul');
       }
-      doTurnPlay(c, w.seat, r.play);
+      doTurnPlay(c, w.seat, r.play, withSkip);
       return null;
     }
     case 'pass': {
@@ -285,12 +308,26 @@ function dispatch(c: Ctx, a: Action, fromAuto: boolean): ActionError | null {
       doChoose(c, a.cards);
       return null;
     }
+    case 'selectAbilities': {
+      const w = checkAwait(c, a.seat, a.awaitId, 'abilitySelect');
+      if (isError(w)) return w;
+      return doSelectAbilities(c, w, a.abilities, a.confirm);
+    }
+    case 'useAbility': {
+      const w = checkAwait(c, a.seat, a.awaitId, 'turn');
+      if (isError(w)) return w;
+      const args: { ability: unknown; target?: unknown; card?: unknown; rank?: unknown } = { ability: a.ability };
+      if (a.target !== undefined) args.target = a.target;
+      if (a.card !== undefined) args.card = a.card;
+      if (a.rank !== undefined) args.rank = a.rank;
+      return doUseAbility(c, w, args);
+    }
     case 'auto': {
       if (fromAuto) return err('malformed', 'nested auto');
       if (a.policy !== 'timeout' && a.policy !== 'cpu') return err('malformed', 'policy must be timeout or cpu');
       if (typeof a.awaitId !== 'number') return err('malformed', 'awaitId must be a number');
       const g = s.game;
-      if (g === null || (s.phase !== 'play' && s.phase !== 'exchange')) return err('wrongPhase', 'no game in progress');
+      if (g === null || !isAwaitPhase(s.phase)) return err('wrongPhase', 'no game in progress');
       const w = g.awaiting.find((x) => x.id === a.awaitId);
       if (w === undefined) return err('staleAwait', `await ${a.awaitId} is not active`);
       const decided = decideAuto(c, w, a.policy);

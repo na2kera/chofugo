@@ -1,6 +1,7 @@
 // auto 操作の決め方（timeout: decisions §8、cpu: design §3.6・decisions §14.9 を差し替えた §14.14）。
 
 import { cardOf, compareCardIds, rankStrength, type CardId } from './cards.ts';
+import { cpuAbilityAction, cpuWantsSkip, decideAbilitySelect } from './abilities.ts';
 import { autoLowerGive, autoUpperGive, exchangeTaskFor } from './exchange.ts';
 import { gameOf, isReversed, legalReturnPlays, legalTurnPlays, topPlay, type Ctx } from './game.ts';
 import { weakestStrength } from './hand.ts';
@@ -30,8 +31,10 @@ function compareCardLists(a: readonly string[], b: readonly string[]): number {
   return a.length - b.length;
 }
 
-function playAction(w: Awaiting, lp: LegalPlay): Action {
-  return { type: 'play', seat: w.seat, awaitId: w.id, cards: lp.cards, shape: lp.shape, confirmFoul: lp.foul };
+function playAction(w: Awaiting, lp: LegalPlay, withSkip = false): Action {
+  const a: Action = { type: 'play', seat: w.seat, awaitId: w.id, cards: lp.cards, shape: lp.shape, confirmFoul: lp.foul };
+  if (withSkip) a.withSkip = true;
+  return a;
 }
 
 /** 7渡し・10捨ての CPU: その時点の向きでいちばん弱いカードから max 枚まで。ジョーカーは最後（design-2 §2.6）。 */
@@ -49,14 +52,21 @@ export function cpuChoice(hand: readonly CardId[], max: number, reversed: boolea
 /** 待ち w に対して、決まりどおりの操作を作る（乱数を使う場合は c.s.rng を進める）。 */
 export function decideAuto(c: Ctx, w: Awaiting, policy: 'timeout' | 'cpu'): Action | null {
   const g = gameOf(c);
+  if (w.kind === 'abilitySelect') return decideAbilitySelect(c, w, policy);
   if (w.kind === 'turn') {
+    // CPU の特権（design-3 §2.5）。時間切れでは使わない。使うときは、カードを選ぶ前に1つだけ
+    if (policy === 'cpu') {
+      const use = cpuAbilityAction(c, w);
+      if (use !== null) return use;
+    }
     const plays = sortForCpu(legalTurnPlays(c, w.seat), isReversed(g));
+    const cpuPlay = (lp: LegalPlay): Action => playAction(w, lp, cpuWantsSkip(g, w.seat, lp.canSkip === true));
     const leader = topPlay(g) === null;
     const pass: Action = { type: 'pass', seat: w.seat, awaitId: w.id };
     if (!leader) {
       if (policy === 'timeout') return pass; // 時間切れは自動でパス
       const best = plays[0];
-      return best !== undefined && !best.foul ? playAction(w, best) : pass;
+      return best !== undefined && !best.foul ? cpuPlay(best) : pass;
     }
     if (plays.length === 0) return pass; // 親で出せる手がない（§2.4）
     if (policy === 'timeout') {
@@ -65,7 +75,7 @@ export function decideAuto(c: Ctx, w: Awaiting, policy: 'timeout' | 'cpu'): Acti
       const choice = single ?? plays[0];
       return choice === undefined ? pass : playAction(w, choice);
     }
-    return playAction(w, plays[0] as LegalPlay);
+    return cpuPlay(plays[0] as LegalPlay);
   }
   if (w.kind === 'respond') {
     if (policy === 'cpu') {

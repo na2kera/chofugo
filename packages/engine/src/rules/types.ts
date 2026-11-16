@@ -1,6 +1,6 @@
 // ルールモジュールの形（design §3.7）。中心の処理は、登録されたモジュールに問い合わせるだけにする。
 
-import type { CardId } from '../cards.ts';
+import type { CardId, Rank } from '../cards.ts';
 import type {
   Effect,
   LeaderRule,
@@ -51,6 +51,8 @@ export type RuleModule = {
   leaderRule?: LeaderRule;
   /** 手札から選ぶ効果（handChoice）を持つルール: 選んだカードの行き先。give = 次の人へ渡す、discard = 捨て札へ。 */
   choiceTarget?: 'give' | 'discard';
+  /** 場を流すかもしれない手か（8切りの8、砂嵐）。特権のスキップを付けられない手の判定に使う（design-3 §2.4）。 */
+  mayFlush?(ctx: RuleCtx, play: Play): boolean;
   /** 出したあとの効果（8切り、革命、J バック、縛りの成立、返しの一周の開始）。 */
   afterPlay?(ctx: RuleCtx, played: FieldPlay, prev: FieldPlay | null): Effect[];
   /** 反則上がりの判定。判定に使う向きは、出す直前のもの（decisions §14.4）。 */
@@ -63,6 +65,8 @@ export type RuleModule = {
   canStartReturnRound?(ctx: RuleCtx, source: SeatId): boolean;
   /** 返しの一周を持つルール: 直前で省いたときの効果（残りの効果の前に処理する）。 */
   onReturnRoundSkipped?(ctx: RuleCtx, source: SeatId): Effect[];
+  /** 返しの一周を持つルール: 返しに使う数字。独裁でこの数字が封じられていれば、一周を省く（design-3、decisions §17.5）。 */
+  returnRank?: Rank;
   /** 返しの一周を持つルール: 返したカードを場ではなく捨て札に置く（4止め）。 */
   returnToDiscard?: boolean;
   /** 返しの一周を持つルール: 返しの手が無視する制限の種類。 */

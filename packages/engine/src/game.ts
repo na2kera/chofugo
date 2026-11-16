@@ -11,6 +11,7 @@ import {
   strongerRun,
 } from './hand.ts';
 import { activeModules, findModule, type RuleCtx, type RuleModule } from './rules/index.ts';
+import { banViolation, canSkipPlay, decideAbilityGrant, hasUnused } from './abilities.ts';
 import {
   SEATS,
   type Effect,
@@ -128,12 +129,14 @@ function refine(c: Ctx, play: Play): Play {
   return p;
 }
 
-/** モジュールの制限（ignore にある種類は無視する）。 */
+/** モジュールの制限と、特権の独裁の制限（ignore にある種類は無視する。ban を無視する手はない）。 */
 function restriction(c: Ctx, play: Play, seat: SeatId, ignore: readonly ViolationKind[]): Violation | null {
   for (const m of c.mods) {
     const v = m.restrictPlay?.(ruleCtx(c), play, seat) ?? null;
     if (v !== null && !ignore.includes(v.kind)) return v;
   }
+  const b = banViolation(gameOf(c), play);
+  if (b !== null && !ignore.includes(b.kind)) return b;
   return null;
 }
 
@@ -215,13 +218,16 @@ export function legalTurnPlays(c: Ctx, seat: SeatId): LegalPlay[] {
   const shapes = all.filter((sh) => top === null || sh === top.play.shape);
   const out: LegalPlay[] = [];
   const seen = new Set<string>();
+  const skipAvailable = hasUnused(g, seat, 'skip');
   const add = (cards: CardId[], sh: Shape) => {
     const key = `${sh}:${cards.join(',')}`;
     if (seen.has(key)) return;
     const r = interpretTurnPlay(c, seat, cards, sh);
     if (!r.ok) return;
     seen.add(key);
-    out.push({ cards, shape: sh, play: r.play, foul: isFoulFinish(c, seat, r.play) });
+    const lp: LegalPlay = { cards, shape: sh, play: r.play, foul: isFoulFinish(c, seat, r.play) };
+    if (skipAvailable && canSkipPlay(c, seat, r.play)) lp.canSkip = true;
+    out.push(lp);
   };
   for (const sh of shapes) {
     const sets = sh === 'group' ? enumerateGroupSets(hand, size) : enumerateRunSets(hand, size);
@@ -271,6 +277,16 @@ function startRespond(c: Ctx, seat: SeatId): void {
 function startChoiceAwait(c: Ctx, seat: SeatId): void {
   const g = gameOf(c);
   g.awaiting = [{ id: c.s.nextAwaitId++, seat, kind: 'choice', timer: 'choice' }];
+}
+
+/** 手番の対戦を始める（交換のあと、特権の選択のあと、または交換のない1ゲーム目）。最初の親を決めて手番を作る。 */
+export function beginPlay(c: Ctx): void {
+  const g = gameOf(c);
+  c.s.phase = 'play';
+  g.awaiting = [];
+  // 最初の親と義務のカードは、交換が終わった時点の手札で決め直す（design-2 §2.3）
+  applyStarterRules(c);
+  startTurn(c, g.starter);
 }
 
 // ---------- 最初の親 ----------
@@ -325,11 +341,12 @@ function sortEffects(effects: Effect[]): Effect[] {
 }
 
 /** 状態だけを変える効果を処理する。ゲームが終わったら true。流れを変える効果は runEffects で扱う。 */
-function applyStateEffect(c: Ctx, e: Effect): boolean {
+function applyStateEffect(c: Ctx, e: Effect, source: SeatId | null = null): boolean {
   const g = gameOf(c);
   switch (e.type) {
     case 'toggleRevolution':
       g.revolution = !g.revolution;
+      if (source !== null) g.revolutionBy = source; // 最後に革命を切り替えた席（その3の CPU の判断に使う）
       emit(c, { type: 'revolution', active: g.revolution });
       return false;
     case 'setTempReverse':
@@ -399,7 +416,9 @@ export function runEffects(c: Ctx, source: SeatId, effects: readonly Effect[]): 
         const rest = effects.slice(i + 1);
         // 省く条件は、一周を始める直前の最新の状態で評価し直す（decisions §14.14）
         const mod = findModule(e.rule);
-        if (mod?.canStartReturnRound !== undefined && !mod.canStartReturnRound(ruleCtx(c), source)) {
+        // 独裁で返しに使う数字が封じられていれば、返せないことが全員に分かるので省く（特権なしでは ban はいつも null）
+        const banned = mod?.returnRank !== undefined && g.ban === mod.returnRank;
+        if (banned || (mod?.canStartReturnRound !== undefined && !mod.canStartReturnRound(ruleCtx(c), source))) {
           runEffects(c, source, [...(mod.onReturnRoundSkipped?.(ruleCtx(c), source) ?? []), ...rest]);
           return;
         }
@@ -419,13 +438,13 @@ export function runEffects(c: Ctx, source: SeatId, effects: readonly Effect[]): 
         return;
       }
       case 'skip':
-        skip += e.count; // その3で特権のスキップと合算する
+        skip += e.count; // K スキップと特権のスキップを合算する（§5.8）
         break;
       case 'flush':
         flushField(c, e.leader, e.reason); // 飛ばす人数は捨てる
         return;
       default:
-        if (applyStateEffect(c, e)) return;
+        if (applyStateEffect(c, e, source)) return;
     }
   }
   advanceFrom(c, source, skip);
@@ -450,6 +469,7 @@ export function flushField(c: Ctx, leader: SeatId, reason: FlushReason): void {
 function clearFieldEffects(c: Ctx): void {
   const g = gameOf(c);
   g.passed = [false, false, false, false];
+  g.ban = null; // 独裁は場が流れると解除（親のパスで流れた扱いになるときも同じ）
   const effects: Effect[] = [];
   for (const m of c.mods) effects.push(...(m.onFieldCleared?.(ruleCtx(c)) ?? []));
   for (const e of sortEffects(effects)) applyStateEffect(c, e);
@@ -492,8 +512,8 @@ function advanceFrom(c: Ctx, from: SeatId, skip = 0): void {
 
 // ---------- 操作の適用 ----------
 
-/** 手番で手を出す（検証は済んでいる前提）。 */
-export function doTurnPlay(c: Ctx, seat: SeatId, play: Play): void {
+/** 手番で手を出す（検証は済んでいる前提）。withSkip は特権のスキップ（付けられることは確かめ済み）。 */
+export function doTurnPlay(c: Ctx, seat: SeatId, play: Play, withSkip = false): void {
   const g = gameOf(c);
   const foul = isFoulFinish(c, seat, play); // 出す直前の向きで判定（§14.4）
   const prev = topPlay(g);
@@ -502,7 +522,12 @@ export function doTurnPlay(c: Ctx, seat: SeatId, play: Play): void {
   g.field.push(fp);
   g.lastPlayer = seat;
   g.awaiting = [];
+  g.turnCount[seat] = (g.turnCount[seat] ?? 0) + 1;
   emit(c, { type: 'play', seat, play, foul });
+  if (withSkip && g.abilities !== null) {
+    g.abilities.used.push('skip');
+    emit(c, { type: 'ability', seat, ability: 'skip' });
+  }
 
   // ここまでは、どのモジュールも「出す直前の向き・効果を処理する前の状態」を見る
   const effects: Effect[] = [];
@@ -512,6 +537,7 @@ export function doTurnPlay(c: Ctx, seat: SeatId, play: Play): void {
     effects.push({ type: 'flush', leader: seat, reason: 'jokerUnbeatable' });
   }
   effects.push({ type: 'finishCheck', foul });
+  if (withSkip) effects.push({ type: 'skip', count: 1 });
   runEffects(c, seat, sortEffects(effects));
 }
 
@@ -519,6 +545,7 @@ export function doTurnPlay(c: Ctx, seat: SeatId, play: Play): void {
 export function doPass(c: Ctx, seat: SeatId): void {
   const g = gameOf(c);
   g.awaiting = [];
+  g.turnCount[seat] = (g.turnCount[seat] ?? 0) + 1;
   emit(c, { type: 'pass', seat });
   if (g.lastPlayer === null) {
     // 親のパス（出せる手が1つもないときだけ）: 場が流れた扱いにし、次の人が親になる（§2.4）
@@ -663,6 +690,7 @@ function endGame(c: Ctx): void {
   s.results.push({ gameNo: s.gameNo, places: places.slice(), deltas: deltas.slice() });
   g.awaiting = [];
   g.pending = null;
+  if (s.config.abilities === true) decideAbilityGrant(c);
   emit(c, { type: 'gameEnd', places: places.slice(), deltas: deltas.slice(), scores: s.scores.slice() });
   const count = s.config.gameCount;
   if (count !== null && s.gameNo >= count) {

@@ -13,6 +13,7 @@ export const spade3BeatsJoker: RuleModule = {
     if (ctx.isPublic(SPADE3)) return [];
     return [{ type: 'returnRound', rule: 'spade3_beats_joker' }];
   },
+  returnRank: 3,
   canStartReturnRound(ctx) {
     return !ctx.isPublic(SPADE3);
   },

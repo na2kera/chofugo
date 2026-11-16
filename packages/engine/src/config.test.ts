@@ -75,7 +75,8 @@ describe('createMatch の設定の検証', () => {
     rules.push('revolution'); // 呼び出し側の配列を変えても影響しない
     expect(created.state.config.rules).toEqual(['flush_on_8', 'runs']);
     const { state } = runMatch(cfg(['flush_on_8', 'runs']), [1, 2, 3, 4], 'cpu');
-    expect(state.config).toEqual({ matchId: 'm-test', rules: ['flush_on_8', 'runs'], gameCount: 5 });
+    // その3で abilities（状態の中では必ず boolean）を足した（engine-assumptions.md H）
+    expect(state.config).toEqual({ matchId: 'm-test', rules: ['flush_on_8', 'runs'], gameCount: 5, abilities: false });
   });
 });
 

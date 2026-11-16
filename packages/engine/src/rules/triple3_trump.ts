@@ -19,6 +19,7 @@ function realThrees(hand: readonly CardId[]): CardId[] {
 
 export const triple3Trump: RuleModule = {
   id: 'triple3_trump',
+  mayFlush: (_ctx, play) => isSandstorm(play),
   extraSets(ctx, seat) {
     const threes = realThrees(ctx.game.hands[seat] ?? []);
     const out: CardId[][] = [];
