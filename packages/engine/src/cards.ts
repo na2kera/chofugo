@@ -1,4 +1,4 @@
-// カードの基本定義（仕様書 §3.1）。強さの比較やルールは後続ステップで追加する。
+// カードの基本定義（仕様書 §3.1、decisions §2.1）と、並び順・強さの道具。
 
 export const SUITS = ['spade', 'heart', 'diamond', 'club'] as const;
 export type Suit = (typeof SUITS)[number];

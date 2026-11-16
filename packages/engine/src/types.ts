@@ -140,13 +140,8 @@ export type Effect =
   | { type: 'flush'; leader: SeatId; reason: FlushReason }
   | { type: 'forceLast'; seat: SeatId; reason: 'dethrone' };
 
-export type FlushReason =
-  | 'allPassed'
-  | 'leaderPassed'
-  | 'flush_on_8'
-  | 'spade3_beats_joker'
-  | 'returnFailed'
-  | 'jokerUnbeatable';
+/** 場が流れた理由。ルールによるものはルール ID（8切り、スペ3返しなど）。 */
+export type FlushReason = 'allPassed' | 'leaderPassed' | 'returnFailed' | 'jokerUnbeatable' | RuleId;
 
 /** 返しの一周の途中（再開に必要な情報）。 */
 export type ReturnRoundPending = {
@@ -328,7 +323,6 @@ export type GameEventBody =
   | { type: 'exchangeStart'; pairs: { lower: SeatId; upper: SeatId; count: number }[] }
   | { type: 'exchange'; from: SeatId; to: SeatId; cards: CardId[] }
   | { type: 'exchangeDone' }
-  | { type: 'turnStart'; seat: SeatId; leader: boolean }
   | { type: 'play'; seat: SeatId; play: Play; foul: boolean }
   | { type: 'pass'; seat: SeatId }
   | { type: 'revolution'; active: boolean }

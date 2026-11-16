@@ -15,8 +15,11 @@ export function isValidSeed(seed: unknown): seed is Seed {
   return seed.some((v) => v !== 0);
 }
 
+/** 種から乱数の状態を作る。xoshiro128** の最初の出力は状態の一部だけで決まるため、16 回空回しして混ぜる。 */
 export function rngFromSeed(seed: Seed): RngState {
-  return [seed[0] >>> 0, seed[1] >>> 0, seed[2] >>> 0, seed[3] >>> 0];
+  const s: RngState = [seed[0] >>> 0, seed[1] >>> 0, seed[2] >>> 0, seed[3] >>> 0];
+  for (let i = 0; i < 16; i++) nextU32(s);
+  return s;
 }
 
 function rotl(x: number, k: number): number {

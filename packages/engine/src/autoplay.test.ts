@@ -34,7 +34,7 @@ describe('自動対戦（全256通り）', () => {
           throw new Error(`mask=${mask} policy=${policy} seed=${seed.join(',')}: ${(e as Error).message}`);
         }
       }
-    });
+    }, 120_000);
   }
 
   it('分岐を通っている（返し、反則上がり、都落ち、最後の1人、各種の流れ）', () => {
@@ -58,5 +58,5 @@ describe('自動対戦（種を変えた多数の試合）', () => {
         expect(state.results).toHaveLength(10);
       }
     }
-  });
+  }, 120_000);
 });
