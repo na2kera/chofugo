@@ -4,6 +4,9 @@
   "type": "module",
   "license": "UNLICENSED",
   "packageManager": "pnpm@10.14.0",
+  "volta": {
+    "node": "22.13.1"
+  },
   "scripts": {
     "dev": "pnpm --filter @chofugo/client dev",
     "build": "pnpm --filter @chofugo/client build",
