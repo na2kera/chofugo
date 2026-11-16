@@ -1,0 +1,134 @@
+.lobby {
+  flex: 1;
+  padding: 16px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  min-height: 0;
+}
+.box {
+  padding: 6px 8px 6px;
+}
+.h {
+  margin: 0 0 4px;
+  font-weight: 400;
+  font-size: 16px;
+  color: var(--gold);
+}
+.hrow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 20px;
+  margin-bottom: 4px;
+}
+.hrow .h {
+  margin: 0;
+}
+.seats {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.seat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+}
+.dot {
+  width: 10px;
+}
+.arrow {
+  display: inline-flex;
+  width: 10px;
+}
+.name {
+  white-space: nowrap;
+  overflow: hidden;
+  min-width: 0;
+}
+.sp {
+  flex: 1;
+}
+.rules {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 10px;
+}
+.tg {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+}
+/* 見た目は見本の高さ、押せる範囲は 44px */
+.ruleName {
+  height: 44px;
+  margin: -6px 0;
+  text-align: left;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  color: inherit;
+}
+.swBtn {
+  height: 44px;
+  margin: -6px 0;
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+.sw {
+  width: 48px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+.desc {
+  grid-column: 1 / -1;
+  margin: 0 0 6px;
+  padding: 6px 8px;
+  background: var(--k);
+  color: var(--cream);
+  line-height: 24px;
+}
+.reset {
+  height: 44px;
+  margin: -12px 0;
+  color: var(--gold-hi);
+  padding: 0 2px;
+}
+.reset:disabled {
+  color: var(--muted);
+}
+.seg {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.segBtn {
+  height: 44px;
+  display: grid;
+  align-items: center;
+}
+.segFace {
+  display: grid;
+  place-items: center;
+  height: 32px;
+  padding: 0;
+}
+.grow {
+  flex: 1;
+  min-height: 8px;
+}
+.wait {
+  margin: 0;
+  min-height: 52px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}

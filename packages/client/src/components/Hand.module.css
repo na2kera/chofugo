@@ -1,0 +1,8 @@
+.hand {
+  position: relative;
+  margin: 0 12px;
+  flex: none;
+}
+.pos {
+  position: absolute;
+}

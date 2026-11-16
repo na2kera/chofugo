@@ -1,0 +1,66 @@
+.opp {
+  position: relative;
+  padding: 4px 2px 4px;
+  text-align: center;
+  min-width: 0;
+}
+.plateRow {
+  height: 20px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+.name {
+  margin: 6px 0 6px;
+  height: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.away {
+  color: var(--muted);
+}
+.fan {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  color: var(--gold-hi);
+  font-size: 32px;
+}
+.placeTag {
+  font-size: 16px;
+  padding: 2px 6px;
+}
+.timer {
+  height: 4px;
+  margin: 4px 4px 0;
+}
+.tag {
+  position: absolute;
+  top: -14px;
+  right: 0;
+  padding: 0 2px;
+  font-size: 16px;
+  line-height: 16px;
+}
+.owner {
+  position: absolute;
+  left: 50%;
+  bottom: -18px;
+  margin-left: -8px;
+  color: var(--gold);
+}
+.flash {
+  animation: blink 600ms steps(1) both;
+}
+@keyframes blink {
+  0% { visibility: visible; }
+  25% { visibility: hidden; }
+  50% { visibility: visible; }
+  75% { visibility: hidden; }
+  100% { visibility: visible; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .flash { animation: none; }
+}

@@ -1,0 +1,31 @@
+.link {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.code {
+  flex: 1;
+  min-width: 0;
+  font-family: inherit;
+  background: var(--k);
+  padding: 8px 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  color: var(--cream);
+  user-select: all;
+}
+/* 見た目は見本の大きさ（高さ32px）、押せる範囲は 44px */
+.btn {
+  height: 44px;
+  flex: none;
+  display: grid;
+  place-items: center;
+}
+.face {
+  display: grid;
+  place-items: center;
+  height: 32px;
+  min-width: 80px;
+  padding: 0 4px;
+  color: var(--gold-hi);
+}

@@ -1,0 +1,93 @@
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  background-color: var(--bg);
+  background-image: var(--bg-check);
+  background-size: 8px 8px;
+  padding: 12px;
+  display: flex;
+}
+.panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 6px 8px 8px;
+  min-height: 0;
+}
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.h {
+  margin: 0;
+  font-weight: 400;
+  font-size: 16px;
+  color: var(--gold);
+}
+.close {
+  height: 44px;
+  padding: 0 8px;
+  color: var(--gold-hi);
+}
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+}
+.grow {
+  flex: 1;
+}
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.scroll {
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1;
+}
+.row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 2px;
+  line-height: 20px;
+}
+.fullName {
+  word-break: break-all;
+}
+.hrow {
+  display: flex;
+  gap: 8px;
+  padding: 4px 2px;
+  align-items: center;
+}
+.hname {
+  width: 96px;
+  flex: none;
+  white-space: nowrap;
+  overflow: hidden;
+  color: var(--muted);
+}
+.hcards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+.mini {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--cream);
+}
+.joker {
+  color: var(--red-text);
+}

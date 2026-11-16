@@ -1,0 +1,98 @@
+/* カード。枠は見本の SOLID 枠（クリーム色、2px 単位）。中の配置はすべて 2px の倍数。 */
+.card {
+  width: 56px;
+  height: 80px;
+  position: relative;
+  flex: none;
+  display: block;
+  padding: 0;
+  text-align: left;
+}
+.frame {
+  border-image-source: var(--f-card);
+}
+.frameSel {
+  border-image-source: var(--f-cardsel);
+}
+.large {
+  width: 68px;
+  height: 96px;
+}
+.black { color: var(--ink); }
+.red { color: var(--red); }
+.joker { color: var(--crimson); }
+
+.rank {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+.small {
+  position: absolute;
+  top: 32px;
+  left: 0;
+}
+.big {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+}
+.large .rank { top: 2px; left: 2px; }
+.large .small { top: 36px; left: 2px; }
+.large .big { right: 2px; bottom: 2px; }
+
+.jokerText {
+  position: absolute;
+  top: 0;
+  left: 0;
+  writing-mode: vertical-rl;
+  font-size: 16px;
+  line-height: 16px;
+  letter-spacing: 0;
+}
+
+/* 出せないカード（見本どおり、明るさを下げる。半透明にはしない） */
+.dim {
+  filter: brightness(0.42);
+}
+
+/* 選んだカード：上に 16px ずれて金色の枠と下の線（見本どおり） */
+.sel {
+  transform: translateY(-16px);
+}
+.sel::after {
+  content: '';
+  position: absolute;
+  left: -2px;
+  right: -2px;
+  bottom: -14px;
+  height: 4px;
+  background: var(--gold);
+}
+
+.button {
+  cursor: pointer;
+}
+.button:focus-visible {
+  outline: 2px solid var(--gold-hi);
+  outline-offset: 0;
+}
+
+/* 受け取ったカード（交換）：明るい金の輪の枠 */
+.frameRecv {
+  border-image-source: var(--f-cardrecv);
+}
+
+.back {
+  display: inline-block;
+  width: 22px;
+  height: 30px;
+  flex: none;
+  border: 2px solid var(--k);
+  outline: 2px solid var(--gold-lo);
+  outline-offset: -4px;
+  background-color: var(--crimson);
+  background-image: var(--back-tile);
+  background-size: 16px 16px;
+  image-rendering: pixelated;
+}

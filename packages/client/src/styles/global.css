@@ -1,0 +1,180 @@
+/* 全体の決まり（design-client §1、§7.11）。色は見本 docs/mock/look-pixel.html の色だけ。
+   線・余白・大きさは 2px の倍数。文字は DotGothic16 の 16px・32px・48px だけ。
+   グラデーション・ぼかした影・光彩・角丸・半透明の重ね塗りは使わない。 */
+
+@font-face {
+  font-family: 'DotGothic16';
+  src: url('/fonts/DotGothic16-Regular.ttf') format('truetype');
+  font-display: block;
+}
+
+:root {
+  --k: #0a0806;
+  --bg: #100d08;
+  --bg2: #15110a;
+  --panel: #1d1810;
+  --panel2: #2a2216;
+  --gold: #e2b93b;
+  --gold-hi: #ffe9a0;
+  --gold-lo: #9a6e1a;
+  --cream: #f4ecd2;
+  --cream-lo: #cfc29a;
+  --red: #d8402f;
+  --red-text: #ff8a76;
+  --red-line: #c8463a;
+  --ink: #1c1820;
+  --muted: #a8997a;
+  --dim-line: #6b5a36;
+  --crimson: #7a1f2b;
+  --crimson-lo: #561420;
+  --bar-off: #3a2f1c;
+  --outer: #050403;
+
+  --fs: 16px;
+  --fs-l: 32px;
+  --fs-xl: 48px;
+  --tap: 44px;
+  --app-w: 430px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-font-smoothing: none;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+  height: 100%;
+}
+
+body {
+  background: var(--outer);
+  color: var(--cream);
+  font-family: 'DotGothic16', monospace;
+  font-size: var(--fs);
+  line-height: 1;
+}
+
+button,
+input {
+  font-family: inherit;
+  font-size: var(--fs);
+  color: inherit;
+}
+
+button {
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:disabled {
+  cursor: default;
+}
+
+button:focus-visible,
+input:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--gold-hi);
+  outline-offset: 2px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ---------- 枠（2px 単位のドット。border-image は src/pixel/frames.ts） ---------- */
+.f {
+  border-width: 6px;
+  border-style: solid;
+  border-color: transparent;
+  border-image-slice: 3 fill;
+  border-image-width: 6px;
+  border-image-repeat: stretch;
+  image-rendering: pixelated;
+}
+.f.win { border-image-source: var(--f-win); }
+.f.dim { border-image-source: var(--f-dim); }
+.f.hot { border-image-source: var(--f-hot); }
+.f.red { border-image-source: var(--f-red); }
+.f.btn { border-image-source: var(--f-btn); color: var(--ink); }
+.f.btn2 { border-image-source: var(--f-win); color: var(--gold-hi); }
+.f.plate { border-image-source: var(--f-plate); color: var(--ink); }
+.f.plate2 { border-image-source: var(--f-dim); color: var(--muted); }
+
+/* ---------- ボタン ---------- */
+.btn,
+.btn2 {
+  min-height: 52px;
+  width: 100%;
+  display: grid;
+  place-items: center;
+  letter-spacing: 2px;
+  padding: 0 8px;
+}
+.btn:disabled {
+  border-image-source: var(--f-dim);
+  color: var(--muted);
+}
+.btn2:disabled {
+  border-image-source: var(--f-dim);
+  color: var(--muted);
+}
+.btn:not(:disabled):active,
+.btn2:not(:disabled):active {
+  transform: translateY(2px);
+}
+
+.plate,
+.plate2 {
+  display: inline-block;
+  padding: 0 4px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.gold { color: var(--gold); }
+.hi { color: var(--gold-hi); }
+.mut { color: var(--muted); }
+.redt { color: var(--red-text); }
+.big { font-size: var(--fs-l); }
+
+/* ---------- 画面の外枠：幅 430px までの縦長を中央に ---------- */
+.app {
+  max-width: var(--app-w);
+  margin: 0 auto;
+  min-height: 100%;
+  height: 100%;
+  position: relative;
+  background-color: var(--bg);
+  background-image: var(--bg-check);
+  background-size: 8px 8px;
+  image-rendering: pixelated;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+@media (min-width: 432px) {
+  .app {
+    border-left: 4px solid var(--panel2);
+    border-right: 4px solid var(--panel2);
+    max-width: calc(var(--app-w) + 8px);
+  }
+}

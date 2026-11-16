@@ -1,0 +1,125 @@
+.table {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px 0 14px;
+  height: 44px;
+  flex: none;
+}
+.menuBtn {
+  width: 44px;
+  height: 44px;
+  color: var(--muted);
+  font-size: 16px;
+}
+
+.opps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 8px 10px 0;
+  flex: none;
+}
+
+.msg {
+  margin: 0 14px;
+  padding: 6px 8px;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  flex: none;
+}
+.msgText {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+}
+
+.me {
+  padding: 10px 16px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  flex: none;
+}
+.sp {
+  flex: 1;
+}
+.mine {
+  color: var(--gold);
+  transform: rotate(180deg);
+}
+.meFlash {
+  animation: blink 600ms steps(1) both;
+}
+.bar {
+  padding: 6px 16px 0;
+  height: 14px;
+  flex: none;
+}
+
+.actionArea {
+  min-height: 72px;
+  padding: 4px 16px 16px;
+  flex: none;
+}
+.actions {
+  display: grid;
+  grid-template-columns: 1fr 1.6fr;
+  gap: 12px;
+}
+.actions0 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.actions1 {
+  display: grid;
+}
+.choice {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.confirm {
+  margin: 0;
+  padding: 8px 6px;
+  line-height: 24px;
+  text-align: center;
+}
+
+/* 革命：画面全体が2コマ点滅し、「革命」の文字 */
+.revo {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--crimson);
+  color: var(--gold);
+  font-size: 48px;
+  letter-spacing: 8px;
+  text-shadow: 4px 4px 0 var(--k);
+  animation: blink 480ms steps(1) both;
+  z-index: 20;
+}
+
+@keyframes blink {
+  0% { visibility: visible; }
+  25% { visibility: hidden; }
+  50% { visibility: visible; }
+  75% { visibility: hidden; }
+  100% { visibility: hidden; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .revo { display: none; }
+  .meFlash { animation: none; }
+}

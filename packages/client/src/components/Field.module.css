@@ -1,0 +1,82 @@
+.field {
+  flex: 1 1 auto;
+  min-height: 132px;
+  margin: 16px 14px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 12px;
+  position: relative;
+}
+.frame {
+  border-image-source: var(--f-win);
+}
+.frameRed {
+  border-image-source: var(--f-field-red);
+}
+.states {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.state {
+  height: 28px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.area {
+  position: relative;
+  margin: 0 4px;
+  display: flex;
+  justify-content: center;
+}
+.cards {
+  position: relative;
+  width: 100%;
+}
+.slot {
+  position: absolute;
+}
+.stand {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 4px);
+  color: var(--gold-hi);
+  white-space: nowrap;
+}
+.standAbove {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+.note {
+  margin: 0;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* ---------- 演出（コマ送り、0.6 秒以内、ずらす量は 2px の倍数） ---------- */
+.inLeft { --fx: -128px; --fy: -96px; animation: fly 360ms steps(4) both; }
+.inCenter { --fx: 0px; --fy: -128px; animation: fly 360ms steps(4) both; }
+.inRight { --fx: 128px; --fy: -96px; animation: fly 360ms steps(4) both; }
+.inMe { --fx: 0px; --fy: 160px; animation: fly 360ms steps(4) both; }
+.out { animation: sweep 360ms steps(4) both; }
+
+@keyframes fly {
+  from { transform: translate(var(--fx), var(--fy)); }
+  to { transform: translate(0, 0); }
+}
+@keyframes sweep {
+  0% { transform: translateX(0); visibility: visible; }
+  99% { visibility: visible; }
+  100% { transform: translateX(320px); visibility: hidden; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .inLeft, .inCenter, .inRight, .inMe, .out { animation: none; }
+  .out { visibility: hidden; }
+}
