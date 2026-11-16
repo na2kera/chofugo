@@ -1,0 +1,15 @@
+{
+  "name": "chofugo",
+  "private": true,
+  "type": "module",
+  "license": "UNLICENSED",
+  "packageManager": "pnpm@10.14.0",
+  "scripts": {
+    "dev": "pnpm --filter @chofugo/client dev",
+    "build": "pnpm --filter @chofugo/client build",
+    "preview": "pnpm --filter @chofugo/client preview",
+    "test": "pnpm -r --if-present test",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "deploy": "pnpm --filter @chofugo/client deploy"
+  }
+}
