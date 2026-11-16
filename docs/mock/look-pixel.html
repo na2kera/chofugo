@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>超富豪 画面の見た目の案（ドット調）</title>
+<style>
+  @font-face {
+    font-family: "DotGothic16";
+    src: url("fonts/DotGothic16-Regular.ttf") format("truetype");
+    font-display: block;
+  }
+  :root {
+    --k: #0a0806;        /* 輪郭 */
+    --bg: #100d08;
+    --bg2: #15110a;
+    --panel: #1d1810;
+    --panel2: #2a2216;
+    --gold: #e2b93b;
+    --gold-hi: #ffe9a0;
+    --gold-lo: #9a6e1a;
+    --cream: #f4ecd2;
+    --cream-lo: #cfc29a;
+    --red: #d8402f;
+    --ink: #1c1820;
+    --muted: #a8997a;
+    --crimson: #7a1f2b;
+    --crimson-lo: #561420;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-font-smoothing: none; font-smooth: never; }
+  body { margin: 0; background: #050403; color: var(--cream); font-family: "DotGothic16", monospace; font-size: 16px; line-height: 1; }
+  header.page { padding: 28px 24px 4px; max-width: 1320px; margin: 0 auto; }
+  header.page h1 { font-weight: 400; font-size: 32px; margin: 0 0 12px; color: var(--gold); }
+  header.page p { margin: 0; color: var(--muted); line-height: 1.6; }
+  .boards { display: flex; flex-wrap: wrap; gap: 28px; padding: 24px; max-width: 1320px; margin: 0 auto; justify-content: center; }
+  figure { margin: 0; }
+  figcaption { color: var(--muted); margin: 0 0 12px 2px; }
+  figcaption b { color: var(--gold); font-weight: 400; margin-right: 8px; }
+
+  .phone {
+    width: 390px; height: 800px; position: relative; overflow: hidden;
+    background-color: var(--bg);
+    background-image:
+      linear-gradient(45deg, var(--bg2) 25%, transparent 25%, transparent 75%, var(--bg2) 75%),
+      linear-gradient(45deg, var(--bg2) 25%, transparent 25%, transparent 75%, var(--bg2) 75%);
+    background-size: 8px 8px; background-position: 0 0, 4px 4px;
+    outline: 4px solid #2a2216; outline-offset: 0;
+    display: flex; flex-direction: column;
+  }
+
+  /* 枠はすべて 2px 単位のドットで描く（border-image は下のスクリプトが用意する） */
+  .f { border: 6px solid transparent; border-image-slice: 3 fill; border-image-width: 6px; border-image-repeat: stretch; image-rendering: pixelated; }
+  .f.win   { border-image-source: var(--f-win); }
+  .f.dim   { border-image-source: var(--f-dim); }
+  .f.hot   { border-image-source: var(--f-hot); }
+  .f.red   { border-image-source: var(--f-red); }
+  .f.btn   { border-image-source: var(--f-btn); color: var(--ink); }
+  .f.btn2  { border-image-source: var(--f-win); color: var(--gold-hi); }
+  .f.card  { border-image-source: var(--f-card); }
+  .f.cardsel { border-image-source: var(--f-cardsel); }
+  .f.plate { border-image-source: var(--f-plate); color: var(--ink); }
+  .f.plate2 { border-image-source: var(--f-dim); color: var(--muted); }
+
+  button { font-family: inherit; font-size: 16px; background: none; padding: 0; }
+  .btn, .btn2 { height: 52px; width: 100%; display: grid; place-items: center; letter-spacing: 2px; }
+  .gold { color: var(--gold); } .hi { color: var(--gold-hi); } .mut { color: var(--muted); } .redt { color: #ff8a76; }
+  .big { font-size: 32px; }
+  svg.px { display: block; shape-rendering: crispEdges; }
+
+  /* ---------- カード ---------- */
+  .card { width: 56px; height: 80px; position: relative; color: var(--ink); flex: none; }
+  .card.r { color: var(--red); }
+  .card .n { position: absolute; top: -2px; left: 0; font-size: 32px; text-shadow: 2px 0 0 currentColor; }
+  .card .n.t { transform: scaleX(.78); transform-origin: left; }
+  .card .s { position: absolute; top: 32px; left: 2px; }
+  .card .b { position: absolute; right: 0; bottom: 0; }
+  .card.dim { filter: brightness(.42); }
+  .card.sel { transform: translateY(-16px); }
+  .card.sel::after { content: ""; position: absolute; left: -2px; right: -2px; bottom: -14px; height: 4px; background: var(--gold); }
+  .card.joker { color: var(--crimson); }
+  .card.joker .n { font-size: 16px; top: 2px; left: 2px; writing-mode: vertical-rl; letter-spacing: 0; text-shadow: none; }
+  .back { width: 22px; height: 30px; flex: none; border: 2px solid var(--k); outline: 2px solid var(--gold-lo); outline-offset: -4px;
+    background-color: var(--crimson);
+    background-image: linear-gradient(45deg, var(--crimson-lo) 25%, transparent 25%, transparent 75%, var(--crimson-lo) 75%), linear-gradient(45deg, var(--crimson-lo) 25%, transparent 25%, transparent 75%, var(--crimson-lo) 75%);
+    background-size: 4px 4px; background-position: 0 0, 2px 2px; }
+
+  /* ---------- 対戦 ---------- */
+  .topbar { display: flex; align-items: center; justify-content: space-between; padding: 14px 14px 10px; color: var(--muted); }
+  .opps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 0 10px; }
+  .opp { padding: 4px 2px 6px; text-align: center; position: relative; }
+  .opp .name { margin: 8px 0; white-space: nowrap; overflow: hidden; }
+  .opp .fan { display: flex; justify-content: center; align-items: center; gap: 8px; height: 30px; color: var(--gold-hi); font-size: 32px; }
+  .opp .fan .back { margin-left: -14px; } .opp .fan .back:first-child { margin-left: 0; }
+  .opp .count { margin-top: 8px; color: var(--gold-hi); }
+  .opp .tag { position: absolute; top: -12px; right: 2px; padding: 0 2px; font-size: 16px; }
+  .opp .arrow { position: absolute; left: 50%; bottom: -18px; margin-left: -7px; color: var(--gold); }
+  .plate, .plate2 { display: inline-block; padding: 0 4px; }
+
+  .field { flex: 1; margin: 22px 14px 10px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+    background-color: #17130c; }
+  .field .cards { display: flex; gap: 8px; }
+  .field .cards .card { width: 68px; height: 96px; }
+  .field .cards .card .s { top: 34px; }
+  .states { display: flex; gap: 8px; align-items: center; }
+  .states .f { padding: 0 6px; display: flex; gap: 4px; align-items: center; height: 28px; }
+  .msg { margin: 0 14px; padding: 8px 10px; display: flex; justify-content: space-between; align-items: center; }
+
+  .me { padding: 12px 16px 0; display: flex; align-items: center; gap: 8px; }
+  .me .sp { flex: 1; }
+  .bar { display: flex; gap: 2px; padding: 8px 16px 0; }
+  .bar i { flex: 1; height: 8px; background: #3a2f1c; } .bar i.on { background: var(--gold); }
+  .hand { display: flex; padding: 26px 12px 10px; justify-content: center; }
+  .hand .card { margin-left: -29px; } .hand .card:first-child { margin-left: 0; }
+  .actions { display: grid; grid-template-columns: 1fr 1.6fr; gap: 12px; padding: 4px 16px 20px; }
+
+  /* ---------- ロビー ---------- */
+  .lobby { padding: 18px 16px; display: flex; flex-direction: column; gap: 12px; height: 100%; }
+  .logo { text-align: center; font-size: 48px; color: var(--gold); text-shadow: 4px 4px 0 var(--gold-lo), 6px 6px 0 var(--k); letter-spacing: 8px; padding-left: 8px; margin-top: 2px; }
+  .crown { display: flex; justify-content: center; color: var(--gold); margin-bottom: -4px; }
+  .sub { text-align: center; color: var(--muted); }
+  .box { padding: 6px 8px 8px; }
+  .box h3 { margin: 0 0 8px; font-weight: 400; font-size: 16px; color: var(--gold); }
+  .link { display: flex; gap: 8px; align-items: center; }
+  .link code { flex: 1; font-family: inherit; background: var(--k); padding: 8px 6px; white-space: nowrap; overflow: hidden; color: var(--cream); }
+  .link .btn2 { width: 72px; height: 32px; }
+  .seat { display: flex; align-items: center; gap: 8px; height: 30px; }
+  .seat .sp { flex: 1; }
+  .rules { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
+  .tg { display: flex; align-items: center; justify-content: space-between; height: 28px; }
+  .sw { width: 44px; text-align: center; padding: 0; }
+  .seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; text-align: center; }
+  .seg span { padding: 2px 0; }
+  .grow { flex: 1; }
+
+  /* ---------- 結果 ---------- */
+  .result { padding: 24px 16px 20px; display: flex; flex-direction: column; gap: 14px; height: 100%; }
+  .result h2 { font-weight: 400; font-size: 48px; text-align: center; margin: 0; color: var(--gold); text-shadow: 4px 4px 0 var(--gold-lo); letter-spacing: 8px; padding-left: 8px; }
+  .center { text-align: center; }
+  .fall { text-align: center; padding: 8px 4px; }
+  .rank { display: grid; grid-template-columns: 40px 1fr auto 72px; align-items: center; gap: 8px; padding: 8px 8px; }
+  .rank .no { font-size: 32px; color: var(--gold-hi); text-align: center; }
+  .rank .who small { display: block; font-size: 16px; color: var(--muted); margin-top: 6px; }
+  .rank .delta { font-size: 32px; }
+  .rank .total { text-align: right; color: var(--muted); }
+  .rank.first .who { display: flex; flex-direction: column; }
+  .rank.first .who .nm { display: flex; gap: 8px; align-items: center; color: var(--gold-hi); }
+</style>
+</head>
+<body>
+<header class="page">
+  <h1>超富豪 ― 画面の見た目の案（ドット調）</h1>
+  <p>黒と金はそのままに、グラデーション・光彩・角丸をやめて、2ドット単位の枠と平らな塗りだけで描いた案です。表示する情報は最小限に絞っています。カードは白地に大きな数字とマークで、読みやすさを優先しています。動かない見本です。</p>
+</header>
+
+<div class="boards">
+
+  <!-- ===== ロビー ===== -->
+  <figure>
+    <figcaption><b>1</b>ロビー（ホストの画面）</figcaption>
+    <div class="phone">
+      <div class="lobby">
+        <div class="crown"><i class="ic" data-i="crown" data-u="4"></i></div>
+        <div class="logo">超富豪</div>
+        <div class="f win box">
+          <h3>招待リンク</h3>
+          <div class="link"><code>chofugo.example/r/K7M2QX9D</code><button class="f btn2">コピー</button></div>
+        </div>
+        <div class="f win box">
+          <h3>参加者</h3>
+          <div class="seat"><span class="gold">▶</span><span>なつき</span><span class="sp"></span><span class="f plate">ホスト</span></div>
+          <div class="seat"><span class="gold">▶</span><span>たろう</span></div>
+          <div class="seat"><span class="gold">▶</span><span>ゆい</span></div>
+          <div class="seat mut"><span>・</span><span>空席</span></div>
+        </div>
+        <div class="f win box">
+          <h3>ルール</h3>
+          <div class="rules">
+            <div class="tg"><span>8切り</span><span class="f plate sw">ON</span></div>
+            <div class="tg"><span>革命</span><span class="f plate sw">ON</span></div>
+            <div class="tg"><span>階段</span><span class="f plate sw">ON</span></div>
+            <div class="tg"><span>スペ3返し</span><span class="f plate sw">ON</span></div>
+            <div class="tg"><span>都落ち</span><span class="f plate sw">ON</span></div>
+            <div class="tg mut"><span>Jバック</span><span class="f plate2 sw">OFF</span></div>
+            <div class="tg mut"><span>縛り</span><span class="f plate2 sw">OFF</span></div>
+            <div class="tg mut"><span>禁止上がり</span><span class="f plate2 sw">OFF</span></div>
+          </div>
+        </div>
+        <div class="f win box">
+          <h3>ゲーム数</h3>
+          <div class="seg"><span class="f plate">5ゲーム</span><span class="f plate2">10ゲーム</span><span class="f plate2">無制限</span></div>
+        </div>
+        <div class="grow"></div>
+        <button class="f btn">ゲームを始める</button>
+      </div>
+    </div>
+  </figure>
+
+  <!-- ===== 対戦 ===== -->
+  <figure>
+    <figcaption><b>2</b>対戦（自分の手番、9の2枚組に返すところ）</figcaption>
+    <div class="phone">
+      <div class="topbar"><span>第3ゲーム/5</span><span>≡</span></div>
+      <div class="opps">
+        <div class="f dim opp">
+          <span class="f plate">大富豪</span>
+          <div class="name">たろう</div>
+          <div class="fan"><i class="back"></i>5</div>
+        </div>
+        <div class="f dim opp">
+          <span class="f red tag redt">パス</span>
+          <span class="f plate2">貧民</span>
+          <div class="name">ゆい</div>
+          <div class="fan"><i class="back"></i>9</div>
+        </div>
+        <div class="f dim opp">
+          <span class="f plate2">大貧民</span>
+          <div class="name">CPU 1</div>
+          <div class="fan"><i class="back"></i>7</div>
+        </div>
+      </div>
+
+      <div class="f win field">
+        <div class="states">
+          <span class="f red redt">革命中</span>
+          <span class="f win hi">縛り <i class="ic" data-i="spade" data-u="2"></i><i class="ic" data-i="heart" data-u="2" style="color:#ff8a76"></i></span>
+        </div>
+        <div class="cards">
+          <div class="f card card"><span class="n">9</span><span class="s"><i class="ic" data-i="spade" data-u="2"></i></span><span class="b"><i class="ic" data-i="spade" data-u="6"></i></span></div>
+          <div class="f card card r"><span class="n">9</span><span class="s"><i class="ic" data-i="heart" data-u="2"></i></span><span class="b"><i class="ic" data-i="heart" data-u="6"></i></span></div>
+        </div>
+      </div>
+
+      <div class="f win msg"><span>CPU 1 は パスした</span><span class="gold">▼</span></div>
+
+      <div class="me">
+        <span class="f plate2">富豪</span><span class="hi">あなたの番</span>
+      </div>
+      <div class="bar"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+
+      <div class="hand" id="hand"></div>
+      <div class="actions">
+        <button class="f btn2">パス</button>
+        <button class="f btn">2枚を出す</button>
+      </div>
+    </div>
+  </figure>
+
+  <!-- ===== 結果 ===== -->
+  <figure>
+    <figcaption><b>3</b>ゲームの結果（都落ちが起きた回）</figcaption>
+    <div class="phone">
+      <div class="result">
+        <h2>結果</h2>
+        <div class="f red fall redt">都落ち！ たろう は 大貧民へ</div>
+        <div class="f hot rank first">
+          <span class="no">1</span>
+          <span class="who"><span class="nm"><i class="ic" data-i="crown" data-u="2"></i>なつき</span></span>
+          <span class="delta hi">+2</span><span class="total">計 +3</span>
+        </div>
+        <div class="f dim rank">
+          <span class="no">2</span>
+          <span class="who">CPU 1</span>
+          <span class="delta hi">+1</span><span class="total">計 -3</span>
+        </div>
+        <div class="f dim rank">
+          <span class="no">3</span>
+          <span class="who">ゆい</span>
+          <span class="delta redt">-1</span><span class="total">計 -2</span>
+        </div>
+        <div class="f dim rank">
+          <span class="no">4</span>
+          <span class="who">たろう</span>
+          <span class="delta redt">-2</span><span class="total">計 +2</span>
+        </div>
+        <div class="grow"></div>
+        <button class="f btn">次のゲームへ</button>
+      </div>
+    </div>
+  </figure>
+
+</div>
+
+<script>
+// ドット絵の定義（# が塗る点）
+const ICONS = {
+  heart: ['.##.##.', '#######', '#######', '#######', '.#####.', '..###..', '...#...'],
+  diamond: ['...#...', '..###..', '.#####.', '#######', '.#####.', '..###..', '...#...'],
+  spade: ['...#...', '..###..', '.#####.', '#######', '#######', '##.#.##', '...#...', '..###..'],
+  club: ['..###..', '.#####.', '..###..', '#######', '#######', '##.#.##', '...#...', '..###..'],
+  crown: ['#...#...#', '#...#...#', '##.###.##', '#########', '#########', '.#######.'],
+  star: ['...#...', '...#...', '#######', '.#####.', '..###..', '.##.##.', '.#...#.'],
+};
+function pixelSvg(rows, u, color) {
+  const w = rows[0].length, h = rows.length;
+  let r = '';
+  rows.forEach((row, y) => [...row].forEach((c, x) => { if (c === '#') r += `<rect x="${x}" y="${y}" width="1" height="1"/>`; }));
+  return `<svg class="px" xmlns="http://www.w3.org/2000/svg" width="${w * u}" height="${h * u}" viewBox="0 0 ${w} ${h}" fill="${color}">${r}</svg>`;
+}
+function renderIcons(root) {
+  root.querySelectorAll('i.ic').forEach((el) => {
+    el.style.display = 'inline-block';
+    el.innerHTML = pixelSvg(ICONS[el.dataset.i], Number(el.dataset.u), 'currentColor');
+  });
+}
+
+// 枠のドット絵（9×9 の点。四隅3点ずつを角、真ん中を伸ばして使う）
+function frame(rows, colors) {
+  let r = '';
+  rows.forEach((row, y) => [...row].forEach((c, x) => { if (colors[c]) r += `<rect x="${x}" y="${y}" width="1" height="1" fill="${colors[c]}"/>`; }));
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="9" height="9" shape-rendering="crispEdges">${r}</svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+}
+const LINE = ['..kkkkk..', '.kgggggk.', 'kggkkkggk', 'kgkpppkgk', 'kgkpppkgk', 'kgkpppkgk', 'kggkkkggk', '.kgggggk.', '..kkkkk..'];
+const SOLID = ['..kkkkk..', '.khhhhhk.', 'khgggggdk', 'khgggggdk', 'khgggggdk', 'khgggggdk', 'khgggggdk', '.kdddddk.', '..kkkkk..'];
+const css = getComputedStyle(document.documentElement);
+const v = (n) => css.getPropertyValue(n).trim();
+const set = (n, val) => document.documentElement.style.setProperty(n, val);
+set('--f-win', frame(LINE, { k: v('--k'), g: v('--gold'), p: v('--panel') }));
+set('--f-dim', frame(LINE, { k: v('--k'), g: '#6b5a36', p: v('--panel') }));
+set('--f-hot', frame(LINE, { k: v('--k'), g: v('--gold-hi'), p: '#3a2c0c' }));
+set('--f-red', frame(LINE, { k: v('--k'), g: '#c8463a', p: '#3a1210' }));
+set('--f-btn', frame(SOLID, { k: v('--k'), h: v('--gold-hi'), g: v('--gold'), d: v('--gold-lo') }));
+set('--f-plate', frame(SOLID, { k: v('--k'), h: v('--gold'), g: v('--gold'), d: v('--gold-lo') }));
+set('--f-card', frame(SOLID, { k: v('--k'), h: v('--cream'), g: v('--cream'), d: v('--cream-lo') }));
+set('--f-cardsel', frame(SOLID, { k: v('--gold'), h: v('--cream'), g: v('--cream'), d: v('--cream-lo') }));
+
+// 手札
+const HAND = [
+  ['3', 'club', 0, 'dim'], ['4', 'diamond', 1, 'dim'], ['6', 'spade', 0, 'sel'], ['6', 'heart', 1, 'sel'],
+  ['7', 'spade', 0, ''], ['7', 'heart', 1, ''], ['8', 'diamond', 1, 'dim'], ['10', 'club', 0, 'dim'],
+  ['J', 'spade', 0, 'dim'], ['K', 'heart', 1, 'dim'], ['A', 'club', 0, 'dim'], ['JOKER', 'star', 0, 'joker'],
+];
+document.getElementById('hand').innerHTML = HAND.map(([n, s, red, st]) => {
+  const cls = ['f', st === 'sel' ? 'cardsel' : 'card', 'card', red ? 'r' : '', st].join(' ');
+  const small = st === 'joker' ? '' : `<span class="s"><i class="ic" data-i="${s}" data-u="2"></i></span>`;
+  return `<div class="${cls}"><span class="n${n === '10' ? ' t' : ''}">${n}</span>${small}<span class="b"><i class="ic" data-i="${s}" data-u="4"></i></span></div>`;
+}).join('');
+renderIcons(document);
+</script>
+</body>
+</html>
