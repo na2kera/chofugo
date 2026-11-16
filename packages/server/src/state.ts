@@ -9,6 +9,7 @@ import {
   RULE_MODULES,
   SEATS,
   awaiting,
+  isAwaitPhase,
   type AwaitKind,
   type AwaitTimer,
   type GameCount,
@@ -24,9 +25,10 @@ import { humanTimerMs, type Timing } from './timing.ts';
 /**
  * 保存する値の形式の番号（design-2 §3.3）。保存の形が変わったら上げる。
  * 番号の違う保存済みのルームは、失効したルームと同じ扱いにする（再接続を拒否し、保存を消す。decisions §16.6）。
- * 1 = その1、2 = その2（設定の下書きに mode を足した。engine の MatchState も version 2）。
+ * 1 = その1、2 = その2（設定の下書きに mode を足した。engine の MatchState も version 2）、
+ * 3 = その3（mode に chofugo、engine の MatchState も version 3。design-3 §3.1）。
  */
-export const STATE_FORMAT = 2;
+export const STATE_FORMAT = 3;
 
 export type SeatRec = {
   kind: 'empty' | 'human' | 'cpu';
@@ -110,9 +112,23 @@ export function isCurrentFormat(v: unknown): v is RoomState {
   return typeof v === 'object' && v !== null && (v as { v?: unknown }).v === STATE_FORMAT;
 }
 
-/** モードで選べるルール（decisions §7）。 */
+/** モードで選べるルール（decisions §7）。超富豪モードは16種すべてで固定（decisions §17.5）。 */
 export function modeRuleIds(mode: GameMode): readonly RuleId[] {
-  return mode === 'daifugo' ? DAIFUGO_MODE_RULE_IDS : CUSTOM_MODE_RULE_IDS;
+  if (mode === 'daifugo') return DAIFUGO_MODE_RULE_IDS;
+  return mode === 'custom' ? CUSTOM_MODE_RULE_IDS : ALL_RULE_IDS;
+}
+
+/** そのモードの試合で特権を使うか（engine の MatchConfig.abilities）。 */
+export function modeHasAbilities(mode: GameMode): boolean {
+  return mode === 'chofugo';
+}
+
+/**
+ * engine に渡す試合の設定を作る（試合の開始と「同じメンバーでもう一度」で共通。design-3 §6.6）。
+ * rules・gameCount・abilities は、開始ではロビーの下書きから、もう一度では終わった試合の設定から渡す。
+ */
+export function buildMatchConfig(matchId: string, src: { rules: readonly RuleId[]; gameCount: GameCount; abilities: boolean }): MatchConfig {
+  return { matchId, rules: src.rules.slice(), gameCount: src.gameCount, abilities: src.abilities };
 }
 
 /**
@@ -120,8 +136,10 @@ export function modeRuleIds(mode: GameMode): readonly RuleId[] {
  * 1. モードで選べるルール以外を除く。
  * 2. 前提を満たさないルール（8切りが OFF のときの4止め）を除く（前提の前提も、残らなくなるまで繰り返す）。
  * 3. ALL_RULE_IDS の順に並べる。
+ * 超富豪モードは、送られたルールを使わず16種すべてにする（design-3 §3.1）。
  */
 export function normalizeRules(mode: GameMode, rules: readonly RuleId[]): RuleId[] {
+  if (mode === 'chofugo') return ALL_RULE_IDS.slice();
   const allowed = modeRuleIds(mode);
   let set = new Set(rules.filter((r) => allowed.includes(r)));
   for (;;) {
@@ -133,19 +151,26 @@ export function normalizeRules(mode: GameMode, rules: readonly RuleId[]): RuleId
 }
 
 /**
- * 期限についての検査（design-2 §3.4）。一時停止中でなければ、engine のすべての待ちに期限（at）が付いていること。
+ * 期限についての検査（design-2 §3.4、design-3 §6.5）。一時停止中でなければ、
+ * 状態の中の待ちの実体（match.game.awaiting）のすべてに期限（at）が付いていること、期限の一覧に実体のない待ちが残っていないこと、
+ * 待ちのあるフェーズ（exchange・ability・play）では待ちが1つ以上あること。
+ * engine の awaiting() ではなく実体と突き合わせるのは、フェーズの扱いの漏れで待ちが外から見えなくなった場合も見つけるため。
  * 期限のない待ちが残るとルームが止まるため。問題の一覧を返す（なければ空）。
  */
 export function deadlineProblems(s: RoomState): string[] {
   if (s.match === null || s.pausedAt !== null) return [];
   const out: string[] = [];
-  for (const a of awaiting(s.match)) {
+  const phase = s.match.phase;
+  // 結果の画面では engine が待ちを空にしている。万一残っていても期限は付けない（syncDeadlines と同じ）ので、待ちのあるフェーズだけを見る
+  const list = isAwaitPhase(phase) ? (s.match.game?.awaiting ?? []) : [];
+  if (isAwaitPhase(phase) && list.length === 0) out.push(`phase ${phase} has no await`);
+  for (const a of list) {
     const d = s.deadlines.find((x) => x.awaitId === a.id);
     if (d === undefined) out.push(`await ${a.id} (${a.kind}, seat ${a.seat}) has no deadline`);
     else if (d.at === null) out.push(`await ${a.id} (${a.kind}, seat ${a.seat}) has no time`);
   }
   for (const d of s.deadlines) {
-    if (!awaiting(s.match).some((a) => a.id === d.awaitId)) out.push(`deadline ${d.awaitId} has no await`);
+    if (!list.some((a) => a.id === d.awaitId)) out.push(`deadline ${d.awaitId} has no await`);
   }
   return out;
 }
@@ -201,15 +226,28 @@ function durationFor(s: RoomState, seat: SeatId, timer: AwaitTimer): number {
   return isBotSeat(s, seat) ? s.timing.cpuDelayMs : humanTimerMs(s.timing, timer);
 }
 
-/** engine の待ちと期限の一覧を合わせる。なくなった待ちの期限を消し、新しい待ちに期限を付ける。 */
+/**
+ * engine の待ちと期限の一覧を合わせる。なくなった待ちの期限を消し、新しい待ちに期限を付ける。
+ * 同じ番号のまま残った待ち（特権の選択の途中の保存）の期限は変えない。
+ * 新しい待ちに continues（特権を使って作り直した手番、design-3 §6.1）があり、元の番号の期限が残っていれば、
+ * 人間（代役でない）は元の期限をそのまま引き継ぐ（動いている間は時刻、一時停止中は残り時間）。CPU・代役は約1秒（ふつうと同じ）。
+ * 元の期限は、消す前に読む。
+ */
 export function syncDeadlines(s: RoomState, now: number): void {
   const list = s.match === null ? [] : awaiting(s.match);
+  const before = new Map(s.deadlines.map((d) => [d.awaitId, d] as const));
   const ids = new Set(list.map((a) => a.id));
   s.deadlines = s.deadlines.filter((d) => ids.has(d.awaitId));
   for (const a of list) {
     if (s.deadlines.some((d) => d.awaitId === a.id)) continue;
     const d: Deadline = { awaitId: a.id, seat: a.seat, kind: a.kind, timer: a.timer, at: null, remaining: null };
-    setDeadlineIn(s, d, durationFor(s, a.seat, a.timer), now);
+    const prev = a.continues === undefined ? undefined : before.get(a.continues);
+    if (prev !== undefined && prev.seat === a.seat && !isBotSeat(s, a.seat)) {
+      d.at = prev.at;
+      d.remaining = prev.remaining;
+    } else {
+      setDeadlineIn(s, d, durationFor(s, a.seat, a.timer), now);
+    }
     s.deadlines.push(d);
   }
   s.deadlines.sort((x, y) => x.awaitId - y.awaitId);

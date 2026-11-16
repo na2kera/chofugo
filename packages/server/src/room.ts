@@ -16,12 +16,15 @@ import {
   validateConfig,
   viewFor,
   type Action,
+  type AbilityId,
   type GameEvent,
   type MatchConfig,
+  type Rank,
   type SeatId,
 } from '@chofugo/engine';
 import type { ClientMessage, CloseCode, ErrorCode, ReqId, RoomView, ServerMessage, StateMessage } from './protocol.ts';
 import {
+  buildMatchConfig,
   connectedHumans,
   deadlineProblems,
   emptySeat,
@@ -30,6 +33,7 @@ import {
   isExpired,
   isBotSeat,
   isCurrentFormat,
+  modeHasAbilities,
   needsHeartbeat,
   nextAlarm,
   normalizeRules,
@@ -89,6 +93,11 @@ class Tx {
   readonly fullFor = new Set<WebSocket>();
   readonly direct: { ws: WebSocket; msg: ServerMessage }[] = [];
   readonly closes: { ws: WebSocket; code: CloseCode; reason: string }[] = [];
+  /**
+   * 外へ見える内容が変わらなくても state を送る接続（特権の選択の途中の保存が成功したとき、design-3 §6.2）。
+   * 出来事は新しい分だけ（全件ではない）。
+   */
+  readonly echoFor = new Set<WebSocket>();
   /** 期限を秒数いっぱいに付け直す席（復帰した本人）。 */
   readonly resetSeats = new Set<SeatId>();
   /** 追記する操作の記録（ゲームの番号ごと）。 */
@@ -243,7 +252,7 @@ export class Room extends DurableObject<Env> {
   async makeOldFormat(): Promise<boolean> {
     const s = this.load();
     if (s === null || s === 'stale') return false;
-    const old = { ...s, v: 1, draft: { rules: s.draft.rules, gameCount: s.draft.gameCount } };
+    const old = { ...s, v: 2 };
     this.ctx.storage.kv.put(ROOM_KEY, old);
     return true;
   }
@@ -472,9 +481,24 @@ export class Room extends DurableObject<Env> {
         case 'choose':
           action = { type: 'choose', seat, awaitId: a.awaitId, cards: a.cards };
           break;
+        // その3（design-3 §3.2）。形は validate.ts で確かめ済み。中身は engine が確かめる（知らない特権は invalidAbility）
+        case 'selectAbilities':
+          action = { type: 'selectAbilities', seat, awaitId: a.awaitId, abilities: a.abilities as AbilityId[], confirm: a.confirm };
+          break;
+        case 'useAbility': {
+          const u: Action = { type: 'useAbility', seat, awaitId: a.awaitId, ability: a.ability as AbilityId };
+          if (a.target !== undefined) u.target = a.target as SeatId;
+          if (a.card !== undefined) u.card = a.card;
+          if (a.rank !== undefined) u.rank = a.rank as Rank;
+          action = u;
+          break;
+        }
       }
+      if (a.type === 'play' && a.withSkip !== undefined && action.type === 'play') action.withSkip = a.withSkip;
       const r = this.applyEngine(tx, action);
       if (!r.ok) tx.error(ws, 'actionRejected', r.message, reqId, r.code);
+      // 選択の途中の保存は、内容が変わらなくても送った人に state を返す（返事が届くまで画面が押せないため、design-3 §6.2）
+      else if (a.type === 'selectAbilities') tx.echoFor.add(ws);
       return;
     }
     // ここから下はホストの操作
@@ -490,7 +514,7 @@ export class Room extends DurableObject<Env> {
         }
         // 形は validate.ts で確かめ済み。ここでは中身を正しい形に直してから保存する（拒否しない、design-2 §3.1）
         const rules = normalizeRules(msg.mode, msg.rules);
-        const err = validateConfig({ matchId: 'draft', rules, gameCount: msg.gameCount });
+        const err = validateConfig({ matchId: 'draft', rules, gameCount: msg.gameCount, abilities: modeHasAbilities(msg.mode) });
         if (err !== null) {
           tx.error(ws, 'invalidConfig', err.message, reqId);
           return;
@@ -509,7 +533,7 @@ export class Room extends DurableObject<Env> {
             s.seats[seatNo] = { ...emptySeat(), kind: 'cpu', name: `CPU ${seatNo + 1}`, gen: r.gen };
           }
         }
-        if (!this.startMatch(tx, { rules: s.draft.rules.slice(), gameCount: s.draft.gameCount })) {
+        if (!this.startMatch(tx, { rules: s.draft.rules, gameCount: s.draft.gameCount, abilities: modeHasAbilities(s.draft.mode) })) {
           tx.error(ws, 'invalidConfig', 'could not create the match', reqId);
         }
         return;
@@ -529,8 +553,9 @@ export class Room extends DurableObject<Env> {
           tx.error(ws, 'wrongPhase', 'rematch is allowed only on the match result', reqId);
           return;
         }
+        // 終わった試合の設定（ルール・ゲーム数・特権）を引き継ぐ。新しい試合の1ゲーム目なので特権はない（design-3 §6.6）
         const cfg = s.match.config;
-        if (!this.startMatch(tx, { rules: cfg.rules.slice(), gameCount: cfg.gameCount })) {
+        if (!this.startMatch(tx, { rules: cfg.rules, gameCount: cfg.gameCount, abilities: cfg.abilities === true })) {
           tx.error(ws, 'invalidConfig', 'could not create the match', reqId);
         }
         return;
@@ -584,11 +609,12 @@ export class Room extends DurableObject<Env> {
     tx.fullFor.add(ws);
   }
 
-  private startMatch(tx: Tx, rc: { rules: MatchConfig['rules']; gameCount: MatchConfig['gameCount'] }): boolean {
+  /** 試合を作る。設定は buildMatchConfig で作る（開始と「もう一度」で共通、design-3 §6.6）。 */
+  private startMatch(tx: Tx, rc: { rules: MatchConfig['rules']; gameCount: MatchConfig['gameCount']; abilities: boolean }): boolean {
     const s = tx.s;
     const matchId = randomId(9);
     const seed = randomSeed();
-    const config: MatchConfig = { matchId, rules: rc.rules, gameCount: rc.gameCount };
+    const config = buildMatchConfig(matchId, rc);
     const r = createMatch(config, seed);
     if (!r.ok) return false;
     const init: MatchInit = { matchId, config, seed };
@@ -721,7 +747,7 @@ export class Room extends DurableObject<Env> {
     for (const o of this.openSockets()) {
       if (tx.closes.some((c) => c.ws === o.ws)) continue;
       const full = tx.fullFor.has(o.ws);
-      if (!changed && !full) continue;
+      if (!changed && !full && !tx.echoFor.has(o.ws)) continue;
       if (o.att.seat === null) {
         this.sendTo(o.ws, this.stateFor(s, null, [], true));
       } else if (this.isCurrent(s, o.att)) {

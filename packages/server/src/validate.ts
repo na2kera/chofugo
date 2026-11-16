@@ -6,6 +6,8 @@ import type { ClientAction, ClientMessage, GameMode } from './protocol.ts';
 
 /** 受け付けるメッセージの最大の長さ（文字数。UTF-16 の単位）。54枚の ID を並べても 1KB 程度。 */
 export const MAX_MESSAGE_LENGTH = 4096;
+/** selectAbilities の abilities の最大の個数（特権は6種）。 */
+const MAX_ABILITIES = 6;
 /** 名前の最大文字数（コードポイント）。 */
 export const MAX_NAME_LENGTH = 12;
 
@@ -66,7 +68,7 @@ function isGameCount(v: unknown): v is GameCount {
 }
 
 function isGameMode(v: unknown): v is GameMode {
-  return v === 'daifugo' || v === 'custom';
+  return v === 'daifugo' || v === 'custom' || v === 'chofugo';
 }
 
 /**
@@ -90,7 +92,7 @@ function parseAction(v: unknown): ClientAction | null {
   if (!isObj(v)) return null;
   switch (v['type']) {
     case 'play': {
-      if (!onlyKeys(v, ['type', 'awaitId', 'cards', 'shape', 'confirmFoul'])) return null;
+      if (!onlyKeys(v, ['type', 'awaitId', 'cards', 'shape', 'confirmFoul', 'withSkip'])) return null;
       if (!isAwaitId(v['awaitId']) || !isCardIds(v['cards'], 1, 54)) return null;
       const a: ClientAction = { type: 'play', awaitId: v['awaitId'], cards: v['cards'].slice() };
       if ('shape' in v) {
@@ -100,6 +102,10 @@ function parseAction(v: unknown): ClientAction | null {
       if ('confirmFoul' in v) {
         if (typeof v['confirmFoul'] !== 'boolean') return null;
         a.confirmFoul = v['confirmFoul'];
+      }
+      if ('withSkip' in v) {
+        if (typeof v['withSkip'] !== 'boolean') return null;
+        a.withSkip = v['withSkip'];
       }
       return a;
     }
@@ -120,6 +126,42 @@ function parseAction(v: unknown): ClientAction | null {
       if (!onlyKeys(v, ['type', 'awaitId', 'cards']) || !isAwaitId(v['awaitId'])) return null;
       if (!isCardIds(v['cards'], 0, 54)) return null;
       return { type, awaitId: v['awaitId'], cards: v['cards'].slice() };
+    }
+    // その3（design-3 §3.2）。形だけを確かめ、中身（持っているか、使えるか）は engine が確かめる
+    case 'selectAbilities': {
+      if (!onlyKeys(v, ['type', 'awaitId', 'abilities', 'confirm']) || !isAwaitId(v['awaitId'])) return null;
+      const list = v['abilities'];
+      if (!Array.isArray(list) || list.length > MAX_ABILITIES) return null;
+      const abilities: string[] = [];
+      // 穴のある配列は for...of で undefined になり、下の検査で落ちる
+      for (const x of list) {
+        if (typeof x !== 'string' || x.length > 32) return null;
+        abilities.push(x);
+      }
+      if (typeof v['confirm'] !== 'boolean') return null;
+      return { type: 'selectAbilities', awaitId: v['awaitId'], abilities, confirm: v['confirm'] };
+    }
+    case 'useAbility': {
+      if (!onlyKeys(v, ['type', 'awaitId', 'ability', 'target', 'card', 'rank']) || !isAwaitId(v['awaitId'])) return null;
+      const ability = v['ability'];
+      if (typeof ability !== 'string' || ability.length > 32) return null;
+      const a: ClientAction = { type: 'useAbility', awaitId: v['awaitId'], ability };
+      if ('target' in v) {
+        const t = v['target'];
+        if (typeof t !== 'number' || !Number.isInteger(t) || t < 0 || t > 3) return null;
+        a.target = t;
+      }
+      if ('card' in v) {
+        const c = v['card'];
+        if (typeof c !== 'string' || c.length > 16 || cardOf(c) === null) return null;
+        a.card = c;
+      }
+      if ('rank' in v) {
+        const r = v['rank'];
+        if (typeof r !== 'number' || !Number.isInteger(r) || r < 3 || r > 15) return null;
+        a.rank = r;
+      }
+      return a;
     }
     default:
       return null;
@@ -159,7 +201,7 @@ export function parseClientMessage(raw: string | ArrayBuffer): ParseResult {
     case 'setConfig': {
       if (!onlyKeys(v, ['type', 'mode', 'rules', 'gameCount', 'reqId'])) return bad('unknown keys in setConfig');
       const mode = v['mode'];
-      if (!isGameMode(mode)) return bad('mode must be "daifugo" or "custom"');
+      if (!isGameMode(mode)) return bad('mode must be "daifugo", "custom" or "chofugo"');
       const rules = parseRules(v['rules']);
       if (rules === null) return bad('rules must be a list of distinct rule ids');
       const gc = v['gameCount'];

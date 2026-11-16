@@ -16,7 +16,7 @@ export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * テストの開発サーバーのポート（19480〜19489）。インスペクターはその +10（19490〜19499）。
  * 同じ機械の別のプロジェクトと衝突しないよう、この範囲だけを使う。
  */
-export const PORTS = { match: 19480, cpu: 19481, connection: 19482, restart: 19483, prod: 19484, review: 19485, custom: 19486, choice: 19487 };
+export const PORTS = { match: 19480, cpu: 19481, connection: 19482, restart: 19483, prod: 19484, review: 19485, custom: 19486, choice: 19487, chofugo: 19488, chofugo2: 19489 };
 
 /** 開発サーバーを起動する。persistDir を渡すと、止めて起動し直しても同じストレージを使う。 */
 /** testMode: false なら CHOFUGO_TEST_MODE を渡さない（本番と同じ設定で起動する）。 */
@@ -297,10 +297,43 @@ export function chooseCards(mine, hand) {
   return { type: 'choose', awaitId: mine.awaitId, cards };
 }
 
-/** 出せる手からでたらめに選ぶ。親は出せる手があればパスできない。 */
+/** engine の ALL_ABILITY_IDS（その3）。 */
+export const ALL_ABILITIES = ['peek', 'steal', 'forceFlush', 'ban', 'revolution', 'skip'];
+
+/** 特権の選択：でたらめに 0〜枠の数を選んで確定する。 */
+export function chooseAbilities(mine) {
+  const pool = ALL_ABILITIES.slice();
+  // 特権が実際に使われるよう、通しのテストでは1個以上を選ぶ（0個の決定は client・ボットのでたらめで確かめる）
+  const n = 1 + Math.floor(Math.random() * mine.slots);
+  const abilities = [];
+  while (abilities.length < n) abilities.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+  return { type: 'selectAbilities', awaitId: mine.awaitId, abilities, confirm: true };
+}
+
+/** 使える特権からでたらめに1つ（引数もでたらめ）。使えるものがなければ null。 */
+export function chooseAbilityUse(mine) {
+  const usable = (mine.abilities ?? []).filter((x) => x.usable);
+  if (usable.length === 0) return null;
+  const u = pick(usable);
+  const a = { type: 'useAbility', awaitId: mine.awaitId, ability: u.id };
+  if (u.targets) a.target = pick(u.targets);
+  if (u.cards) a.card = pick(u.cards);
+  if (u.ranks) a.rank = pick(u.ranks);
+  return a;
+}
+
+/**
+ * 出せる手からでたらめに選ぶ。親は出せる手があればパスできない。
+ * その3：特権の選択はでたらめに確定、手番では時々特権を使い、スキップを付けられる手には時々付ける。
+ */
 export function chooseAction(mine, hand) {
   if (mine.kind === 'choice') return chooseCards(mine, hand);
+  if (mine.kind === 'abilitySelect') return chooseAbilities(mine);
   if (mine.kind === 'turn') {
+    if (Math.random() < 0.5) {
+      const use = chooseAbilityUse(mine);
+      if (use !== null) return use;
+    }
     const plays = mine.plays;
     const usePass = mine.canPass && (plays.length === 0 || Math.random() < 0.3);
     if (usePass) return { type: 'pass', awaitId: mine.awaitId };
@@ -308,8 +341,10 @@ export function chooseAction(mine, hand) {
     const p = nonFoul.length > 0 && Math.random() < 0.9 ? pick(nonFoul) : pick(plays);
     const a = { type: 'play', awaitId: mine.awaitId, cards: p.cards, shape: p.shape };
     if (p.foul) a.confirmFoul = true;
+    if (p.canSkip && Math.random() < 0.5) a.withSkip = true;
     return a;
   }
+  if (mine.kind !== 'respond' && mine.kind !== 'exchangeGive') throw new Error(`unknown await kind ${mine.kind}`);
   if (mine.kind === 'respond') {
     if (mine.plays.length > 0 && Math.random() < 0.7) return { type: 'respond', awaitId: mine.awaitId, cards: pick(mine.plays).cards };
     return { type: 'respond', awaitId: mine.awaitId, cards: null };
@@ -353,6 +388,13 @@ export function checkNoLeak(clients) {
       if (!givenByGame.has(gkey)) givenByGame.set(gkey, new Set());
       const given = givenByGame.get(gkey);
       for (const e of msg.events) {
+        // 透視で見た・見られたカード、強奪で動いたカードは、当事者が知っていてよい（design-3 §2.6）
+        if (e.type === 'ability' && (e.ability === 'peek' || e.ability === 'steal')) {
+          const party = e.seat === me || e.target === me;
+          const shown = [...(e.cards ?? []), ...(e.given !== undefined ? [e.given] : []), ...(e.taken !== undefined ? [e.taken] : [])];
+          if (!party && shown.length > 0) problems.push(`${e.ability} cards shown to non-party ${c.name}`);
+          if (party && e.gameNo === gameNo) for (const x of shown) given.add(x);
+        }
         if (e.type === 'exchange' || e.type === 'give') {
           if (e.cards !== null && e.from !== me && e.to !== me) problems.push(`${e.type} cards shown to non-party ${c.name}`);
           if (e.type === 'give' && e.cards === null && typeof e.count !== 'number') problems.push(`give without count to ${c.name}`);
@@ -361,11 +403,17 @@ export function checkNoLeak(clients) {
         }
       }
       for (const x of msg.view.game.myExchange?.gave ?? []) given.add(x);
+      for (const x of msg.view.game.peek?.cards ?? []) given.add(x);
       const own = new Set(msg.view.game.hand);
       // 自分の待ちの候補は自分の手札の中だけ
       const mine = msg.view.mine;
       if (mine) {
-        const cards = [...(mine.plays ?? []).flatMap((p) => p.cards), ...(mine.forced ?? []), ...(mine.candidates ?? [])];
+        const cards = [
+          ...(mine.plays ?? []).flatMap((p) => p.cards),
+          ...(mine.forced ?? []),
+          ...(mine.candidates ?? []),
+          ...(mine.abilities ?? []).flatMap((u) => u.cards ?? []),
+        ];
         for (const x of cards) if (!own.has(x)) problems.push(`mine contains a card not in own hand (${c.name}): ${x}`);
       }
       const others = hands.get(`${msg.matchId}:${msg.version}`);
@@ -402,5 +450,89 @@ export async function joinAll(clients) {
     await c.connect();
     const id = c.hello();
     await c.waitState((s) => s.seat !== null, 10_000, `joined ${id}`);
+  }
+}
+
+/**
+ * 受け身の席（その3のテスト用）。親でないときは必ずパスし、特権は使わない（選択では何も選ばずに確定する）。
+ * 親のときは出せる手からでたらめに1手。返しの一周はスキップ、7渡し・10捨ては選ばない。交換はでたらめ。
+ * ほかの席を受け身にすると、残りの1席（人間でも CPU でも）がほぼ確実に1位になる。
+ */
+export class PassiveClient extends Client {
+  constructor(base, roomId, opts = {}) {
+    super(base, roomId, { auto: true, ...opts });
+  }
+
+  maybeAct() {
+    const mine = this.state?.view?.mine;
+    if (!mine || this.acted.has(mine.awaitId)) return;
+    this.acted.add(mine.awaitId);
+    this.send({ type: 'action', action: passiveAction(mine, this.state.view.game?.hand ?? []) });
+  }
+}
+
+export function passiveAction(mine, hand) {
+  switch (mine.kind) {
+    case 'turn':
+      if (mine.canPass) return { type: 'pass', awaitId: mine.awaitId };
+      {
+        const p = pick(mine.plays);
+        const a = { type: 'play', awaitId: mine.awaitId, cards: p.cards, shape: p.shape };
+        if (p.foul) a.confirmFoul = true;
+        return a;
+      }
+    case 'abilitySelect':
+      return { type: 'selectAbilities', awaitId: mine.awaitId, abilities: [], confirm: true };
+    case 'respond':
+      return { type: 'respond', awaitId: mine.awaitId, cards: null };
+    case 'choice':
+      return { type: 'choose', awaitId: mine.awaitId, cards: [] };
+    default:
+      return chooseAction(mine, hand);
+  }
+}
+
+/**
+ * 大富豪になるための席（その3のテスト用）。反則にならない手を優先して出し、出せるときはパスしない。
+ * 特権の選択の待ちが来たら、自分では操作せずに manual を立てて止まる（テストが手で操作する）。
+ * stopOnAbility が真なら、使える特権のある手番でも止まる。manual を下ろして resume() で再開する。
+ */
+export class HolderClient extends Client {
+  constructor(base, roomId, opts = {}) {
+    super(base, roomId, { auto: true, autoHost: true, ...opts });
+    this.manual = false;
+    this.stopOnAbility = opts.stopOnAbility ?? false;
+  }
+
+  maybeAct() {
+    if (this.manual) return;
+    const mine = this.state?.view?.mine;
+    if (!mine || this.acted.has(mine.awaitId)) return;
+    if (mine.kind === 'abilitySelect' || (this.stopOnAbility && mine.kind === 'turn' && mine.abilities.some((u) => u.usable))) {
+      this.manual = true;
+      this.notify();
+      return;
+    }
+    this.acted.add(mine.awaitId);
+    let action;
+    if (mine.kind === 'turn') {
+      const ok = mine.plays.filter((p) => !p.foul);
+      if (ok.length > 0) action = { type: 'play', awaitId: mine.awaitId, cards: pick(ok).cards, shape: undefined };
+      else if (mine.canPass) action = { type: 'pass', awaitId: mine.awaitId };
+      else {
+        const p = pick(mine.plays);
+        action = { type: 'play', awaitId: mine.awaitId, cards: p.cards, shape: p.shape, confirmFoul: true };
+      }
+      if (action.type === 'play' && action.shape === undefined) action.shape = mine.plays.find((p) => p.cards === action.cards).shape;
+    } else {
+      action = passiveAction(mine, this.state.view.game?.hand ?? []);
+    }
+    const id = this.send({ type: 'action', action });
+    (this.autoReqs ??= new Set()).add(id);
+  }
+
+  resume() {
+    this.manual = false;
+    this.maybeAct();
   }
 }

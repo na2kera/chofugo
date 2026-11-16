@@ -36,15 +36,17 @@ export type HelloMessage = {
 
 /**
  * ロビーのモード（design-2 §3.1）。選べるルールの範囲を決めるロビーの概念で、engine の MatchConfig にはない。
- * daifugo = 定番8種（DAIFUGO_MODE_RULE_IDS）、custom = 16種（CUSTOM_MODE_RULE_IDS）。
+ * daifugo = 定番8種（DAIFUGO_MODE_RULE_IDS）、custom = 16種（CUSTOM_MODE_RULE_IDS）、
+ * chofugo = 超富豪モード（その3。ルールは16種すべてで固定、特権あり。engine には abilities: true で渡す）。
  */
-export type GameMode = 'daifugo' | 'custom';
+export type GameMode = 'daifugo' | 'custom' | 'chofugo';
 
 /**
  * ホストだけ、ロビーの間だけ。モード・ルールの ON/OFF・ゲーム数。
  * 形（知らないモード、配列でない rules、知らないルール ID、重複、型の違う値）は確かめて拒否する（badMessage）。
  * 形が正しければ、server が中身を直してから保存する（design-2 §3.1、§6.5）：
  * モードで選べないルールを除く → 前提を満たさないルール（8切りのない4止め）を除く → ALL_RULE_IDS の順に並べる。
+ * chofugo では、送られた rules は使わず16種すべてにする（design-3 §3.1）。
  * 直した結果は次の state の room.config で届く。
  */
 export type SetConfigMessage = {
@@ -60,12 +62,23 @@ export type StartMessage = { type: 'start'; reqId?: ReqId };
 
 /** 自分の席の操作。席は server が決めるので含めない。 */
 export type ClientAction =
-  | { type: 'play'; awaitId: number; cards: string[]; shape?: Shape; confirmFoul?: boolean }
+  /** withSkip: 特権のスキップを付けて出す（その3）。 */
+  | { type: 'play'; awaitId: number; cards: string[]; shape?: Shape; confirmFoul?: boolean; withSkip?: boolean }
   | { type: 'pass'; awaitId: number }
   | { type: 'respond'; awaitId: number; cards: string[] | null }
   | { type: 'exchangeGive'; awaitId: number; cards: string[] }
   /** 7渡し・10捨てで選ぶ（その2）。空の配列 = 渡さない・捨てない。 */
-  | { type: 'choose'; awaitId: number; cards: string[] };
+  | { type: 'choose'; awaitId: number; cards: string[] }
+  /**
+   * 特権の選択（その3、design-3 §3.2、§6.2）。abilities は6個以下の文字列。confirm: false は途中の保存（待ちは同じ番号のまま残り、期限も変わらない）。
+   * 成功したら、内容が変わらなくても送った人に state を返す。
+   */
+  | { type: 'selectAbilities'; awaitId: number; abilities: string[]; confirm: boolean }
+  /**
+   * 特権を使う（スキップ以外、その3）。target は 0〜3、rank は 3〜15 の整数、card はカード ID の形。中身は engine が確かめる。
+   * 成功すると手番の待ちは新しい番号になる（continues に元の番号）。人間の期限は元の期限を引き継ぐ（design-3 §6.1）。
+   */
+  | { type: 'useAbility'; awaitId: number; ability: string; target?: number; card?: string; rank?: number };
 
 /**
  * 試合の識別子（`state.matchId`）。試合に対する操作には必ず付ける（decisions §14.15）。
