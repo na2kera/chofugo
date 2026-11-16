@@ -2,7 +2,7 @@
 // あわせて、操作の記録から試合を再現できることを確かめる。
 
 import { afterAll, describe, expect, it } from 'vitest';
-import { Client, checkNoLeak, createRoom, joinAll, sleep, startServer, PORTS } from './helpers.mjs';
+import { Client, checkNoLeak, createRoom, joinAll, sleep, startServer, PORTS, allDeadlineProblems } from './helpers.mjs';
 
 const PORT = PORTS.restart;
 let server;
@@ -67,5 +67,12 @@ describe('再起動', () => {
     expect(checkNoLeak(again)).toEqual([]);
     expect(again.every((c) => c.states.some((s) => s.eventsFull && s.events.some((e) => e.type === 'exchange')))).toBe(true);
     for (const c of again) c.close();
+  });
+});
+
+// 一時停止・再開・代役・再起動をまたいでも、一時停止中でなければすべての待ちに期限があった（design-2 §3.4）
+describe('期限についての検査', () => {
+  it('このファイルで作ったルームに、期限のない待ちが残らなかった', async () => {
+    expect(await allDeadlineProblems(server.base)).toEqual({});
   });
 });

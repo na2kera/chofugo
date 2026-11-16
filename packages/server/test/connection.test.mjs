@@ -3,7 +3,7 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Client, createRoom, sleep, startServer, testRoute, PORTS } from './helpers.mjs';
+import { Client, createRoom, sleep, startServer, testRoute, PORTS, allDeadlineProblems } from './helpers.mjs';
 
 let server;
 beforeAll(async () => {
@@ -178,5 +178,12 @@ describe('切断と復帰', () => {
     // 作られていないルームにも接続できない
     const none = new Client(server.base, 'AAAAAAAAAAAAAAAAAAAAAA', { name: 'none' });
     await expect(none.connect()).rejects.toThrow();
+  });
+});
+
+// 一時停止・再開・代役・再起動をまたいでも、一時停止中でなければすべての待ちに期限があった（design-2 §3.4）
+describe('期限についての検査', () => {
+  it('このファイルで作ったルームに、期限のない待ちが残らなかった', async () => {
+    expect(await allDeadlineProblems(server.base)).toEqual({});
   });
 });

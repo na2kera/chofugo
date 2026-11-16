@@ -2,7 +2,7 @@
 // ロビーでの無応答、失効したルーム、期限と本人の操作、アラームの二重実行、同時に切れた期限の順番、猶予を過ぎた一時停止と再開。
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Client, chooseAction, createRoom, joinAll, sleep, startServer, testRoute, PORTS } from './helpers.mjs';
+import { Client, chooseAction, createRoom, joinAll, sleep, startServer, testRoute, PORTS, allDeadlineProblems } from './helpers.mjs';
 
 let server;
 beforeAll(async () => {
@@ -173,5 +173,12 @@ describe('期限とアラーム', () => {
     void Y;
     X2.close();
     O.close();
+  });
+});
+
+// 一時停止・再開・代役・再起動をまたいでも、一時停止中でなければすべての待ちに期限があった（design-2 §3.4）
+describe('期限についての検査', () => {
+  it('このファイルで作ったルームに、期限のない待ちが残らなかった', async () => {
+    expect(await allDeadlineProblems(server.base)).toEqual({});
   });
 });

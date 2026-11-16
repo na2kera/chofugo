@@ -85,6 +85,9 @@ function killGroup(child) {
   } catch {}
 }
 
+/** このテストのファイルで作ったルーム（最後に期限の検査の記録を確かめるため）。 */
+export const createdRooms = [];
+
 export async function createRoom(base, timing) {
   const r = await fetch(`${base}/api/rooms`, {
     method: 'POST',
@@ -92,7 +95,9 @@ export async function createRoom(base, timing) {
     body: JSON.stringify(timing === undefined ? {} : { timing }),
   });
   if (r.status !== 201) throw new Error(`createRoom failed: ${r.status} ${await r.text()}`);
-  return (await r.json()).roomId;
+  const { roomId } = await r.json();
+  createdRooms.push(roomId);
+  return roomId;
 }
 
 export function randomToken() {
@@ -271,6 +276,16 @@ function pick(arr) {
 /** 期限についての検査（design-2 §3.4）で見つかった問題の一覧。 */
 export async function deadlineProblems(base, roomId) {
   return (await testRoute(base, roomId, 'check')).problems;
+}
+
+/** このファイルで作ったすべてのルームの、期限についての検査の記録（ルームごとの問題の一覧。問題がなければ空）。 */
+export async function allDeadlineProblems(base) {
+  const out = {};
+  for (const id of createdRooms) {
+    const p = await deadlineProblems(base, id);
+    if (p.length > 0) out[id] = p;
+  }
+  return out;
 }
 
 /** 7渡し・10捨ての選択：手札からでたらめに 0〜max 枚。 */
