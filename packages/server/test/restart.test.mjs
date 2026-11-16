@@ -2,7 +2,7 @@
 // あわせて、操作の記録から試合を再現できることを確かめる。
 
 import { afterAll, describe, expect, it } from 'vitest';
-import { Client, createRoom, joinAll, sleep, startServer } from './helpers.mjs';
+import { Client, checkNoLeak, createRoom, joinAll, sleep, startServer } from './helpers.mjs';
 
 const PORT = 8804;
 let server;
@@ -63,6 +63,9 @@ describe('再起動', () => {
     expect(again[0].state.view.results.length).toBe(5);
     for (const c of again) expect(c.rejectedOwn).toEqual([]);
     expect(await replay(roomId)).toMatchObject({ ok: true });
+    // 復帰時に最初から送り直した出来事（交換を含む）にも、他人の手札が含まれていない
+    expect(checkNoLeak(again)).toEqual([]);
+    expect(again.every((c) => c.states.some((s) => s.eventsFull && s.events.some((e) => e.type === 'exchange')))).toBe(true);
     for (const c of again) c.close();
   });
 });

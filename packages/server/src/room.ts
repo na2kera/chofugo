@@ -59,9 +59,22 @@ type Attachment = {
 
 type LoggedAction = { at: number; action: Action };
 
+/** 外へ見える内容（席・ホスト・設定・試合・期限・一時停止）。これが変わったときだけ版番号を上げて全員に送る。 */
+function publicSignature(s: RoomState): string {
+  return JSON.stringify([
+    s.seats.map((r) => [r.kind, r.name, r.connected, r.away]),
+    s.host,
+    s.draft,
+    s.match,
+    s.deadlines,
+    s.pausedAt !== null,
+  ]);
+}
+
 /** 1つの入力の処理の作業領域。 */
 class Tx {
   readonly before: string;
+  readonly beforePublic: string;
   readonly newEvents: GameEvent[] = [];
   /** 現在のゲームの出来事を最初から送る接続。 */
   readonly fullFor = new Set<WebSocket>();
@@ -80,6 +93,7 @@ class Tx {
     readonly now: number,
   ) {
     this.before = JSON.stringify(s);
+    this.beforePublic = publicSignature(s);
   }
 
   error(ws: WebSocket, code: ErrorCode, message: string, reqId: ReqId | null, engineError?: string): void {
@@ -620,9 +634,10 @@ export class Room extends DurableObject<Env> {
     const want = nextAlarm(s);
     const alarmChanged = want !== s.alarmAt || tx.alarmFired;
     s.alarmAt = want;
-    const changed = JSON.stringify(s) !== tx.before;
-    if (changed) {
-      s.version += 1;
+    // 外へ見える内容が変わったときだけ版番号を上げて送る（応答確認の時刻など内部の値だけの変化では送らない）
+    const changed = publicSignature(s) !== tx.beforePublic;
+    if (changed) s.version += 1;
+    if (changed || JSON.stringify(s) !== tx.before) {
       this.ctx.storage.kv.put(ROOM_KEY, s);
       if (tx.clearLogs) {
         for (const [key] of this.ctx.storage.kv.list({ prefix: ACTIONS_PREFIX })) this.ctx.storage.kv.delete(key);

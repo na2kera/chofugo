@@ -1,5 +1,7 @@
 // 切断と代役、復帰、ホストの移動、古い接続の切断通知、応答のない接続、全員不在の一時停止と再開、ルームの終了。
 
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Client, createRoom, sleep, startServer } from './helpers.mjs';
 
@@ -8,6 +10,8 @@ beforeAll(async () => {
   server = await startServer({ port: 8803 });
 });
 afterAll(async () => {
+  // E2E_LOG_DIR を指定したときだけ、開発サーバーのログを書き出す（調べもの用）
+  if (process.env.E2E_LOG_DIR && server) writeFileSync(join(process.env.E2E_LOG_DIR, 'connection-wrangler.log'), server.log());
   await server?.stop();
 });
 
@@ -89,6 +93,29 @@ describe('切断と復帰', () => {
     for (const c of [A2, B2]) expect(c.rejectedOwn).toEqual([]);
     for (const c of [A2, B2, C2]) c.close();
   });
+
+  it('操作をせず ping だけで15秒以上考えていても切断扱いにならない（秒数は既定値）', async () => {
+    const roomId = await createRoom(server.base, { cpuDelayMs: 30 });
+    const A = new Client(server.base, roomId, { name: 'A', pingMs: 3000 });
+    const B = new Client(server.base, roomId, { name: 'B', pingMs: 3000 });
+    for (const c of [A, B]) {
+      await c.connect();
+      c.hello();
+      await c.waitState((s) => s.seat !== null);
+    }
+    A.send({ type: 'start' });
+    await A.waitState((s) => s.deadlines.some((d) => d.seat === 0 || d.seat === 1), 20_000);
+    const n = A.states.length;
+    await sleep(17_000);
+    expect(A.closed).toBe(null);
+    expect(B.closed).toBe(null);
+    expect(A.state.room.seats.slice(0, 2).map((s) => [s.connected, s.away])).toEqual([[true, false], [true, false]]);
+    expect(A.state.room.paused).toBe(false);
+    // 待ちはまだ続いている（30秒の手番の途中）
+    expect(A.states.length).toBe(n);
+    A.close();
+    B.close();
+  }, 60_000);
 
   it('全員不在で止まり、戻ると止めた時点の残り時間で再開する', async () => {
     // 猶予を長くして、止まっている間に代役へ切り替わらないようにする
