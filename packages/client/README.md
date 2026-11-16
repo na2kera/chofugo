@@ -48,18 +48,27 @@ node scripts/bots.mjs --count 4 --delay 50           # ルームを作って4席
 | `--rematch` | 試合の結果で「もう一度」を続ける | しない |
 | `--quiet` | 途中の表示を出さない | 出す |
 | `--base` | 開発サーバーの URL | `http://localhost:5173` |
+| `--mode` | ボットがホストのときのモード（`daifugo`・`custom`） | ルームの設定のまま |
+| `--rules` | ボットがホストのときのルール。`all` はそのモードで選べるすべて、または `flush_on_8,give_on_7` のような ID の列 | ルームの設定のまま |
 
 ボットがホストになったときは、人が `--start-when` 人そろったら試合を始め、ゲームの結果では次のゲームを配る。試合の結果に着いたら終わる。
+7渡し・10捨ての選択では、手札からでたらめに 0〜上限枚を選ぶ。試合の結果に着いたら、モード・ルールと、その2の出来事（激縛り・9リバース・選択・渡す・捨てる・K スキップ・4止めなど）の回数を表示する。
+
+```sh
+node scripts/bots.mjs --count 4 --delay 30 --mode custom --rules all   # カスタム・16種すべて ON の試合
+```
+
+同じ機械で別のプロジェクトが 5173 番を使っているときは、開発サーバーを別のポートで起動して `--base` で渡す（例：`node node_modules/vite/bin/vite.js --port 19470 --strictPort` と `--base http://localhost:19470`）。
 
 ### 見本ページ（開発のときだけ）
 
-`http://localhost:5173/dev/gallery` に、固定のデータで各画面を描く見本がある（ホーム、名前の入力、ロビー、交換、対戦の各場面、結果）。`?s=<場面>` で1つだけ描く。
+`http://localhost:5173/dev/gallery` に、固定のデータで各画面を描く見本がある（ホーム、名前の入力、ロビー、交換、対戦の各場面、結果。その2の分：カスタムのロビー、7渡し・10捨ての選択、4止めの返し、札が5つ出ている場、ダイヤの3の最初の1手、7渡しで受け取ったカード、10捨てを含む履歴、16種のルール一覧）。`?s=<場面>` で1つだけ描く。
 `&vw=390&vh=800` を付けると画面の枠をその大きさに固定する（幅500px未満にできないヘッドレス Chrome で撮るため）。本番のビルドには含まれない。
 
 ## テスト・型チェック・ビルド
 
 ```sh
-pnpm --filter @chofugo/client test        # 手の選び方・交換・残り時間・出来事・つなぎ直し・送信中などの関数のテスト
+pnpm --filter @chofugo/client test        # 手の選び方・交換・7渡し/10捨て・4止め・残り時間・出来事・受け取ったカードの強調・つなぎ直し・送信中などの関数のテスト
 pnpm --filter @chofugo/client typecheck
 pnpm --filter @chofugo/client build       # dist/client（画面）と dist/chofugo（Worker）を作る
 ```

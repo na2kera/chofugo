@@ -74,7 +74,8 @@ export function Menu({ state, feed, onClose, onLeave, initial = 'top' }: Props) 
         )}
 
         {sec === 'rules' && (
-          <ul className={s.rows}>
+          // カスタムモードでは16種まで並ぶので、入りきらなければ縦にスクロールする
+          <ul className={`${s.rows} ${s.scroll}`}>
             {state.room.config.rules.map((r) => (
               <li key={r} className={s.row}>{ruleName(r)}</li>
             ))}
