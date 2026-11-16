@@ -25,6 +25,11 @@ export type Timing = {
   heartbeatCheckMs: number;
   /** 人間の接続が0になってからルームを閉じるまで（30分）。 */
   pausedCloseMs: number;
+  /**
+   * テスト専用：アラームを、計算した時刻よりこれだけ遅らせて設定する（本番は常に 0）。
+   * 「期限を過ぎたが auto がまだ適用されていない」場面や「失効したがまだ削除されていない」場面を作るために使う。
+   */
+  testAlarmLagMs: number;
 };
 
 export const DEFAULT_TIMING: Readonly<Timing> = Object.freeze({
@@ -38,6 +43,7 @@ export const DEFAULT_TIMING: Readonly<Timing> = Object.freeze({
   heartbeatTimeoutMs: 15_000,
   heartbeatCheckMs: 15_000,
   pausedCloseMs: 30 * 60_000,
+  testAlarmLagMs: 0,
 });
 
 const TIMING_KEYS = Object.keys(DEFAULT_TIMING) as (keyof Timing)[];
@@ -59,7 +65,7 @@ export function humanTimerMs(t: Timing, timer: AwaitTimer): number {
 }
 
 /**
- * テスト用の差し替えを読む。知らないキー、整数でない値、範囲外（10ms〜1時間）は null（ルーム作成を拒否する）。
+ * テスト用の差し替えを読む。知らないキー、整数でない値、範囲外（10ms〜1時間。testAlarmLagMs だけは 0〜1分）は null（ルーム作成を拒否する）。
  * 指定のないキーは既定値のまま。
  */
 export function parseTimingOverride(v: unknown): Timing | null {
@@ -67,7 +73,8 @@ export function parseTimingOverride(v: unknown): Timing | null {
   const out: Timing = { ...DEFAULT_TIMING };
   for (const [k, val] of Object.entries(v)) {
     if (!(TIMING_KEYS as string[]).includes(k)) return null;
-    if (typeof val !== 'number' || !Number.isInteger(val) || val < 10 || val > 3_600_000) return null;
+    const [min, max] = k === 'testAlarmLagMs' ? [0, 60_000] : [10, 3_600_000];
+    if (typeof val !== 'number' || !Number.isInteger(val) || val < min || val > max) return null;
     out[k as keyof Timing] = val;
   }
   return out;

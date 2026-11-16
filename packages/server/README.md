@@ -37,6 +37,6 @@ pnpm --filter @chofugo/server typecheck    # wrangler types で worker-configura
 pnpm --filter @chofugo/server test
 ```
 
-- `test/*.test.mjs` が、それぞれ自分の開発サーバー（`wrangler dev`、ポート 8801〜8804、一時ディレクトリのストレージ）を起動し、本物の WebSocket で接続して確かめる。終わると開発サーバーを止める。
-- ファイルは1つずつ順に実行する（`vitest.config.mjs`）。全体で約1分。
+- `test/*.test.mjs` が、それぞれ自分の開発サーバー（`wrangler dev`、ポート 8801〜8806、一時ディレクトリのストレージ）を起動し、本物の WebSocket で接続して確かめる。終わると開発サーバーを止める。`prod.test.mjs` だけはテスト用の機能を有効にせずに起動する。`origin.test.mjs` は Origin の比較の単体テスト。
+- ファイルは1つずつ順に実行する（`vitest.config.mjs`）。全体で約75秒。
 - テストのファイルは JavaScript で書いており、型チェックの対象外（`@types/node` を足していないため）。

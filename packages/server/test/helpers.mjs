@@ -13,7 +13,8 @@ const WRANGLER_JS = join(SERVER_DIR, 'node_modules', 'wrangler', 'bin', 'wrangle
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** 開発サーバーを起動する。persistDir を渡すと、止めて起動し直しても同じストレージを使う。 */
-export async function startServer({ port, persistDir } = {}) {
+/** testMode: false なら CHOFUGO_TEST_MODE を渡さない（本番と同じ設定で起動する）。 */
+export async function startServer({ port, persistDir, testMode = true } = {}) {
   const dir = persistDir ?? mkdtempSync(join(tmpdir(), 'chofugo-e2e-'));
   const args = [
     WRANGLER_JS,
@@ -27,8 +28,7 @@ export async function startServer({ port, persistDir } = {}) {
     '--persist-to',
     dir,
     '--show-interactive-dev-session=false',
-    '--var',
-    'CHOFUGO_TEST_MODE:1',
+    ...(testMode ? ['--var', 'CHOFUGO_TEST_MODE:1'] : []),
   ];
   const child = spawn(process.execPath, args, {
     cwd: SERVER_DIR,
@@ -171,9 +171,12 @@ export class Client {
     for (const w of ws) if (!w()) this.waiters.push(w);
   }
 
+  /** 試合に対する操作には、指定がなければいまの試合の識別子を付ける。 */
   send(obj) {
     const reqId = this.reqId++;
-    this.ws.send(JSON.stringify({ ...obj, reqId }));
+    const m = { ...obj, reqId };
+    if (MATCH_MESSAGES.includes(obj.type) && !('matchId' in obj)) m.matchId = this.state?.matchId ?? null;
+    this.ws.send(JSON.stringify(m));
     return reqId;
   }
 
@@ -244,6 +247,15 @@ export class Client {
     this.nextGameSent.add(key);
     this.send({ type: 'nextGame' });
   }
+}
+
+const MATCH_MESSAGES = ['action', 'nextGame', 'endMatch', 'rematch'];
+
+/** テスト用の経路を呼ぶ。 */
+export async function testRoute(base, roomId, name) {
+  const r = await fetch(`${base}/api/rooms/${roomId}/test/${name}`, { method: 'POST' });
+  if (r.status !== 200) throw new Error(`test/${name}: ${r.status}`);
+  return r.json();
 }
 
 function pick(arr) {

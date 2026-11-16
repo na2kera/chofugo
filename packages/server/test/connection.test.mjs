@@ -3,7 +3,7 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Client, createRoom, sleep, startServer } from './helpers.mjs';
+import { Client, createRoom, sleep, startServer, testRoute } from './helpers.mjs';
 
 let server;
 beforeAll(async () => {
@@ -106,6 +106,7 @@ describe('切断と復帰', () => {
     A.send({ type: 'start' });
     await A.waitState((s) => s.deadlines.some((d) => d.seat === 0 || d.seat === 1), 20_000);
     const n = A.states.length;
+    const inst0 = (await testRoute(server.base, roomId, 'instance')).instance;
     await sleep(17_000);
     expect(A.closed).toBe(null);
     expect(B.closed).toBe(null);
@@ -113,6 +114,9 @@ describe('切断と復帰', () => {
     expect(A.state.room.paused).toBe(false);
     // 待ちはまだ続いている（30秒の手番の途中）
     expect(A.states.length).toBe(n);
+    // この間に Durable Object は休止して作り直されている（接続と添付データは残り、席は接続中のまま）
+    const inst1 = (await testRoute(server.base, roomId, 'instance')).instance;
+    expect(inst1).not.toBe(inst0);
     A.close();
     B.close();
   }, 60_000);

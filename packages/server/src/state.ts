@@ -190,9 +190,14 @@ export function resume(s: RoomState, now: number): void {
   }
 }
 
-/** 応答の確認が必要な間か（人間の操作を待っている、または結果画面でホストを待っている）。 */
-export function needsHeartbeat(s: RoomState): boolean {
-  if (s.pausedAt !== null || s.match === null) return false;
+/**
+ * 応答の確認が必要な間か（decisions §14.15、design §8.2）。
+ * 席のない接続（hello 前）がある間、ロビーで接続中の人間がいる間、人間の操作を待っている間、結果画面でホストを待っている間。
+ */
+export function needsHeartbeat(s: RoomState, hasUnseatedSocket: boolean): boolean {
+  if (hasUnseatedSocket) return true;
+  if (s.pausedAt !== null) return false;
+  if (s.match === null) return connectedHumans(s) > 0;
   if (s.match.phase === 'gameResult' || s.match.phase === 'matchResult') return true;
   return s.deadlines.some((d) => {
     const r = seatRec(s, d.seat);
@@ -202,7 +207,10 @@ export function needsHeartbeat(s: RoomState): boolean {
 
 /** 次にアラームを鳴らす時刻。 */
 export function nextAlarm(s: RoomState): number | null {
-  if (s.pausedAt !== null) return s.pausedAt + s.timing.pausedCloseMs;
+  if (s.pausedAt !== null) {
+    const close = s.pausedAt + s.timing.pausedCloseMs;
+    return s.hbCheckAt !== null && s.hbCheckAt < close ? s.hbCheckAt : close;
+  }
   let t: number | null = null;
   const take = (x: number): void => {
     if (t === null || x < t) t = x;
@@ -213,6 +221,11 @@ export function nextAlarm(s: RoomState): number | null {
   }
   if (s.hbCheckAt !== null) take(s.hbCheckAt);
   return t;
+}
+
+/** 一時停止の30分を過ぎて失効しているか（decisions §14.15）。 */
+export function isExpired(s: RoomState, now: number): boolean {
+  return s.pausedAt !== null && now >= s.pausedAt + s.timing.pausedCloseMs;
 }
 
 /** 全員に見える段階。 */

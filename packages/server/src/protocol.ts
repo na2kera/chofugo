@@ -52,14 +52,21 @@ export type ClientAction =
   | { type: 'respond'; awaitId: number; cards: string[] | null }
   | { type: 'exchangeGive'; awaitId: number; cards: string[] };
 
-export type ActionMessage = { type: 'action'; action: ClientAction; reqId?: ReqId };
+/**
+ * 試合の識別子（`state.matchId`）。試合に対する操作には必ず付ける（decisions §14.15）。
+ * 現在の試合と一致しなければ `staleMatch` で拒否される（rematch をまたいだ古い操作を防ぐ。待ち番号は試合ごとに1から振り直される）。
+ * 英数字と `-` `_` で 1〜32 文字。
+ */
+export type MatchId = string;
+
+export type ActionMessage = { type: 'action'; matchId: MatchId; action: ClientAction; reqId?: ReqId };
 
 /** ホストだけ。ゲームの結果画面で次のゲームを配る。 */
-export type NextGameMessage = { type: 'nextGame'; reqId?: ReqId };
+export type NextGameMessage = { type: 'nextGame'; matchId: MatchId; reqId?: ReqId };
 /** ホストだけ。無制限の試合で、ゲームの結果画面のときに試合を終える。 */
-export type EndMatchMessage = { type: 'endMatch'; reqId?: ReqId };
-/** ホストだけ。試合の結果画面で、同じ席・同じ設定のまま点数と階級を戻して新しい試合を始める。 */
-export type RematchMessage = { type: 'rematch'; reqId?: ReqId };
+export type EndMatchMessage = { type: 'endMatch'; matchId: MatchId; reqId?: ReqId };
+/** ホストだけ。試合の結果画面で、同じ席・同じ設定のまま点数と階級を戻して新しい試合を始める。matchId は終わった試合のもの。 */
+export type RematchMessage = { type: 'rematch'; matchId: MatchId; reqId?: ReqId };
 
 export type ClientMessage =
   | HelloMessage
@@ -147,7 +154,8 @@ export type ErrorCode =
   | 'roomFull' // 入れる席がない
   | 'cannotJoin' // いまは途中参加できない
   | 'notHost' // ホスト以外のホスト操作
-  | 'wrongPhase' // その段階ではできない
+  | 'wrongPhase' // その段階ではできない（試合がないときの試合への操作を含む）
+  | 'staleMatch' // matchId が現在の試合と違う
   | 'invalidConfig' // ルール設定の誤り
   | 'actionRejected'; // engine が操作を拒否した（engineError に理由）
 

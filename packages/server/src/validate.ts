@@ -43,6 +43,11 @@ function isCardIds(v: unknown, min: number, max: number): v is string[] {
 }
 
 const TOKEN_RE = /^[A-Za-z0-9_-]{22,64}$/;
+const MATCH_ID_RE = /^[A-Za-z0-9_-]{1,32}$/;
+
+function isMatchId(v: unknown): v is string {
+  return typeof v === 'string' && MATCH_ID_RE.test(v);
+}
 // 制御文字・書式文字・行区切り・段落区切り・私用領域・サロゲートの片割れを拒否する
 const BAD_NAME_CHAR = /[\p{Cc}\p{Cf}\p{Co}\p{Cs}\p{Zl}\p{Zp}]/u;
 
@@ -147,18 +152,24 @@ export function parseClientMessage(raw: string | ArrayBuffer): ParseResult {
       return withReq({ type: 'setConfig', rules, gameCount: gc });
     }
     case 'action': {
-      if (!onlyKeys(v, ['type', 'action', 'reqId'])) return bad('unknown keys in action');
+      if (!onlyKeys(v, ['type', 'matchId', 'action', 'reqId'])) return bad('unknown keys in action');
+      const matchId = v['matchId'];
+      if (!isMatchId(matchId)) return bad('matchId is required');
       const action = parseAction(v['action']);
       if (action === null) return bad('malformed action');
-      return withReq({ type: 'action', action });
+      return withReq({ type: 'action', matchId, action });
     }
     case 'start':
+      if (!onlyKeys(v, ['type', 'reqId'])) return bad('unknown keys in start');
+      return withReq({ type: 'start' });
     case 'nextGame':
     case 'endMatch':
     case 'rematch': {
       const type = v['type'];
-      if (!onlyKeys(v, ['type', 'reqId'])) return bad(`unknown keys in ${type}`);
-      return withReq({ type });
+      if (!onlyKeys(v, ['type', 'matchId', 'reqId'])) return bad(`unknown keys in ${type}`);
+      const matchId = v['matchId'];
+      if (!isMatchId(matchId)) return bad('matchId is required');
+      return withReq({ type, matchId });
     }
     default:
       return bad('unknown message type');

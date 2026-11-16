@@ -7,9 +7,11 @@
 //   POST /api/rooms の本文に { "timing": { ... } } を付けて秒数を差し替えられる
 //   POST /api/rooms/:id/test/alarm でアラームの処理をいま実行する（2回鳴った場合の確認）
 //   POST /api/rooms/:id/test/replay で操作の記録から試合を再現し、保存された状態と一致するかを返す
+//   POST /api/rooms/:id/test/instance で Durable Object のインスタンスの識別子を返す（休止から作り直されたかの確認）
 
 import { DEFAULT_TIMING, parseTimingOverride, type Timing } from './timing.ts';
 import type { CreateRoomResponse } from './protocol.ts';
+import { originAllowed } from './origin.ts';
 
 export { Room } from './room.ts';
 
@@ -28,14 +30,36 @@ function newRoomId(): string {
   return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-/** Origin があれば、自分のサイト（同じホスト）であることを確かめる。ブラウザ以外は Origin を付けないことがあるので、無ければ通す。 */
-function originAllowed(request: Request, url: URL): boolean {
-  const origin = request.headers.get('Origin');
-  if (origin === null) return true;
+const MAX_BODY_BYTES = 2048;
+
+/** 本文を上限つきで読む。上限を超えた時点で読むのをやめて null を返す（Content-Length だけには頼らない）。 */
+async function readBodyLimited(request: Request, limit: number): Promise<string | null> {
+  const len = request.headers.get('Content-Length');
+  if (len !== null && Number(len) > limit) return null;
+  if (request.body === null) return '';
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > limit) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const buf = new Uint8Array(total);
+  let pos = 0;
+  for (const c of chunks) {
+    buf.set(c, pos);
+    pos += c.byteLength;
+  }
   try {
-    return new URL(origin).host === url.host;
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(buf);
   } catch {
-    return false;
+    return '\u0000invalid';
   }
 }
 
@@ -45,8 +69,8 @@ function json(body: unknown, status = 200): Response {
 
 async function createRoom(request: Request, env: Env): Promise<Response> {
   let timing: Timing = { ...DEFAULT_TIMING };
-  const text = await request.text();
-  if (text.length > 2048) return json({ error: 'body too large' }, 413);
+  const text = await readBodyLimited(request, MAX_BODY_BYTES);
+  if (text === null) return json({ error: 'body too large' }, 413);
   if (text.trim() !== '') {
     let body: unknown;
     try {
@@ -82,22 +106,23 @@ export default {
       const path = url.pathname;
       if (path === '/api/rooms') {
         if (request.method !== 'POST') return json({ error: 'method not allowed' }, 405);
-        if (!originAllowed(request, url)) return json({ error: 'forbidden origin' }, 403);
+        if (!originAllowed(request.headers.get('Origin'), url)) return json({ error: 'forbidden origin' }, 403);
         return await createRoom(request, env);
       }
-      const m = /^\/api\/rooms\/([^/]+)\/(ws|test\/alarm|test\/replay)$/.exec(path);
+      const m = /^\/api\/rooms\/([^/]+)\/(ws|test\/alarm|test\/replay|test\/instance)$/.exec(path);
       if (m !== null) {
         const roomId = m[1] ?? '';
         if (!ROOM_ID_RE.test(roomId)) return json({ error: 'room not found' }, 404);
         const stub = env.ROOM.getByName(roomId);
         if (m[2] === 'ws') {
           if (request.method !== 'GET') return json({ error: 'method not allowed' }, 405);
+          if (!originAllowed(request.headers.get('Origin'), url)) return json({ error: 'forbidden origin' }, 403);
           if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') return json({ error: 'expected websocket' }, 426);
-          if (!originAllowed(request, url)) return json({ error: 'forbidden origin' }, 403);
           return await stub.fetch(request);
         }
         if (!isTestMode(env) || request.method !== 'POST') return json({ error: 'not found' }, 404);
         if (m[2] === 'test/replay') return json(await stub.replayCheck());
+        if (m[2] === 'test/instance') return json({ instance: await stub.instance() });
         const version = await stub.runAlarmNow();
         return json({ version });
       }

@@ -40,19 +40,22 @@ describe('4人で1試合', () => {
     // 壊れたメッセージ
     expect((await p2.waitError(p2.send({ type: 'setConfig', rules: ['nope'], gameCount: 5 }))).code).toBe('badMessage');
     p2.sendRaw('{not json');
-    p2.sendRaw(JSON.stringify({ type: 'action', action: { type: 'play', awaitId: 1, cards: ['spade-3'], extra: 1 }, reqId: 900 }));
+    p2.sendRaw(JSON.stringify({ type: 'action', matchId: 'm', action: { type: 'play', awaitId: 1, cards: ['spade-3'], extra: 1 }, reqId: 900 }));
     p2.sendRaw(JSON.stringify({ type: 'hello', token: 'short', name: 'x', reqId: 901 }));
     p2.sendRaw(JSON.stringify({ type: 'hello', token: p2.token, name: '\u0000bad', reqId: 902 }));
-    p2.sendRaw(JSON.stringify({ type: 'action', action: { type: 'pass', awaitId: 1.5 }, reqId: 903 }));
-    p2.sendRaw(JSON.stringify({ type: 'action', action: { type: 'play', awaitId: 1, cards: ['spade-3', 'spade-3'] }, reqId: 904 }));
+    p2.sendRaw(JSON.stringify({ type: 'action', matchId: 'm', action: { type: 'pass', awaitId: 1.5 }, reqId: 903 }));
+    p2.sendRaw(JSON.stringify({ type: 'action', matchId: 'm', action: { type: 'play', awaitId: 1, cards: ['spade-3', 'spade-3'] }, reqId: 904 }));
+    // matchId のない試合への操作
+    p2.sendRaw(JSON.stringify({ type: 'action', action: { type: 'pass', awaitId: 1 }, reqId: 905 }));
+    p2.sendRaw(JSON.stringify({ type: 'nextGame', reqId: 906 }));
     p2.sendRaw('x'.repeat(5000));
     p2.ws.send(new Uint8Array([1, 2, 3]));
-    for (const id of [900, 901, 902, 903, 904]) expect((await p2.waitError(id)).code).toBe('badMessage');
+    for (const id of [900, 901, 902, 903, 904, 905, 906]) expect((await p2.waitError(id)).code).toBe('badMessage');
     await p2.waitFor(() => (p2.errors.filter((e) => e.code === 'tooLarge').length === 1 ? true : undefined), 5000, 'tooLarge');
     await p2.waitFor(() => (p2.errors.filter((e) => e.reqId === null && e.code === 'badMessage').length >= 2 ? true : undefined), 5000, 'binary+json');
     // 2回目の hello、試合前の操作
     expect((await p3.waitError(p3.hello())).code).toBe('alreadyJoined');
-    expect((await p3.waitError(p3.send({ type: 'action', action: { type: 'pass', awaitId: 1 } }))).code).toBe('wrongPhase');
+    expect((await p3.waitError(p3.send({ type: 'action', matchId: 'nomatch', action: { type: 'pass', awaitId: 1 } }))).code).toBe('wrongPhase');
     // 設定の誤り（前提のルールはその1にはないので、知らない組み合わせはない。ゲーム数の誤りは形の検査で落ちる）
     expect((await host.waitError(host.send({ type: 'setConfig', rules: ALL8, gameCount: 7 }))).code).toBe('badMessage');
 
@@ -108,6 +111,12 @@ describe('4人で1試合', () => {
     expect([e2.code, e2.engineError]).toEqual(['actionRejected', 'staleAwait']);
     // ホスト以外は次のゲームを配れない
     expect((await p1.waitError(p1.send({ type: 'nextGame' }))).code).toBe('notHost');
+    // rematch をまたいだ古い操作：待ち番号は新しい試合でも有効な番号だが、前の試合の matchId なので拒否される
+    const eOld = await owner.waitError(owner.send({ type: 'action', matchId, action: { type: 'pass', awaitId: awaited.id } }));
+    expect(eOld.code).toBe('staleMatch');
+    expect(host.state.view.awaiting.some((a) => a.id === awaited.id)).toBe(true);
+    expect((await host.waitError(host.send({ type: 'nextGame', matchId }))).code).toBe('staleMatch');
+    expect((await host.waitError(host.send({ type: 'rematch', matchId }))).code).toBe('staleMatch');
 
     for (const c of [...clients, fifth, late]) c.close();
   });

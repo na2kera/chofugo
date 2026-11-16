@@ -26,6 +26,7 @@ import {
   emptySeat,
   ensureHost,
   initialRoom,
+  isExpired,
   isBotSeat,
   needsHeartbeat,
   nextAlarm,
@@ -133,6 +134,9 @@ function isAttachment(v: unknown): v is Attachment {
 }
 
 export class Room extends DurableObject<Env> {
+  /** このインスタンス（メモリ上の Durable Object）の識別子。作り直されると変わる。テスト用の経路でだけ外へ出す。 */
+  private readonly instanceId = randomId(6);
+
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     // 心拍の "ping" には Durable Object を起こさずに "pong" を返す
@@ -143,10 +147,11 @@ export class Room extends DurableObject<Env> {
         const s = this.load();
         if (s === null) return;
         const want = nextAlarm(s);
+        const target = want === null ? null : want + s.timing.testAlarmLagMs;
         const cur = await this.ctx.storage.getAlarm();
-        if (cur !== want) {
-          if (want === null) await this.ctx.storage.deleteAlarm();
-          else await this.ctx.storage.setAlarm(want);
+        if (cur !== target) {
+          if (target === null) await this.ctx.storage.deleteAlarm();
+          else await this.ctx.storage.setAlarm(target);
         }
         if (s.alarmAt !== want) {
           s.alarmAt = want;
@@ -199,8 +204,13 @@ export class Room extends DurableObject<Env> {
     const want = nextAlarm(s);
     s.alarmAt = want;
     this.ctx.storage.kv.put(ROOM_KEY, s);
-    if (want !== null) void this.ctx.storage.setAlarm(want);
+    if (want !== null) void this.ctx.storage.setAlarm(want + s.timing.testAlarmLagMs);
     return true;
+  }
+
+  /** テスト用：このインスタンスの識別子（休止から作り直されたかを確かめる）。 */
+  async instance(): Promise<string> {
+    return this.instanceId;
   }
 
   /** テスト用：アラームの処理をいま実行する（2回鳴った場合の確認）。Worker がテストのときだけ呼ぶ。 */
@@ -237,6 +247,11 @@ export class Room extends DurableObject<Env> {
     try {
       const s = this.load();
       if (s === null) return new Response('room not found', { status: 404 });
+      // 一時停止の30分を過ぎたルームは、削除の処理がまだでも失効している（decisions §14.15）
+      if (isExpired(s, Date.now())) {
+        await this.closeRoom();
+        return new Response('room not found', { status: 404 });
+      }
       if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') return new Response('expected websocket', { status: 426 });
       if (this.ctx.getWebSockets().length >= MAX_SOCKETS) return new Response('too many connections', { status: 503 });
       const pair = new WebSocketPair();
@@ -278,6 +293,10 @@ export class Room extends DurableObject<Env> {
         return;
       }
       const now = Date.now();
+      if (isExpired(s, now)) {
+        await this.closeRoom();
+        return;
+      }
       att.lastSeen = now;
       ws.serializeAttachment(att);
       const tx = new Tx(s, now);
@@ -295,18 +314,22 @@ export class Room extends DurableObject<Env> {
   }
 
   override async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
-    this.onSocketGone(ws);
+    await this.onSocketGone(ws);
     this.safeClose(ws, code === 1005 || code === 1006 ? 1000 : code, reason);
   }
 
   override async webSocketError(ws: WebSocket): Promise<void> {
-    this.onSocketGone(ws);
+    await this.onSocketGone(ws);
   }
 
-  private onSocketGone(ws: WebSocket): void {
+  private async onSocketGone(ws: WebSocket): Promise<void> {
     try {
       const s = this.load();
       if (s === null) return;
+      if (isExpired(s, Date.now())) {
+        await this.closeRoom();
+        return;
+      }
       const att = this.attachment(ws);
       const tx = new Tx(s, Date.now());
       // 現在の番号の接続の切断だけを扱う（古い接続の通知で、復帰済みの人を切断扱いにしない）
@@ -321,7 +344,9 @@ export class Room extends DurableObject<Env> {
   // ---------- アラーム ----------
 
   override async alarm(): Promise<void> {
-    try {
+    // 例外は捕まえずにプラットフォームのやり直し（回数に上限がある）に任せる。
+    // やり直しが尽きても、次の入力の commit（期限が過去なら必ず設定し直す）か、起動時の点検でアラームは設定し直される。
+    {
       const s = this.load();
       if (s === null) {
         await this.ctx.storage.deleteAlarm();
@@ -330,7 +355,7 @@ export class Room extends DurableObject<Env> {
       const now = Date.now();
       const tx = new Tx(s, now);
       tx.alarmFired = true;
-      if (s.pausedAt !== null && now >= s.pausedAt + s.timing.pausedCloseMs) {
+      if (isExpired(s, now)) {
         await this.closeRoom();
         return;
       }
@@ -339,14 +364,6 @@ export class Room extends DurableObject<Env> {
       this.runExpired(tx);
       this.settle(tx);
       this.commit(tx);
-    } catch (e) {
-      console.error('alarm failed', e);
-      // 次のアラームがないまま止まらないように、少しあとにやり直す
-      try {
-        void this.ctx.storage.setAlarm(Date.now() + 1000);
-      } catch {
-        // 何もしない
-      }
     }
   }
 
@@ -390,11 +407,19 @@ export class Room extends DurableObject<Env> {
       return;
     }
     const seat = att.seat;
-    if (msg.type === 'action') {
+    // 試合に対する操作は、どの試合に向けたものかを確かめる（decisions §14.15）
+    if (msg.type === 'action' || msg.type === 'nextGame' || msg.type === 'endMatch' || msg.type === 'rematch') {
       if (s.match === null) {
         tx.error(ws, 'wrongPhase', 'no match in progress', reqId);
         return;
       }
+      if (msg.matchId !== s.match.matchId) {
+        tx.error(ws, 'staleMatch', 'this message is for another match', reqId);
+        return;
+      }
+    }
+    if (msg.type === 'action') {
+      if (s.match === null) return;
       const a = msg.action;
       let action: Action;
       switch (a.type) {
@@ -621,7 +646,7 @@ export class Room extends DurableObject<Env> {
     for (const seat of tx.resetSeats) resetSeatDeadlines(s, seat, now);
     tx.resetSeats.clear();
     ensureHost(s);
-    if (needsHeartbeat(s)) {
+    if (needsHeartbeat(s, alive.some((o) => o.att.seat === null))) {
       if (s.hbCheckAt === null) s.hbCheckAt = now + s.timing.heartbeatCheckMs;
     } else {
       s.hbCheckAt = null;
@@ -632,7 +657,9 @@ export class Room extends DurableObject<Env> {
   private commit(tx: Tx): void {
     const s = tx.s;
     const want = nextAlarm(s);
-    const alarmChanged = want !== s.alarmAt || tx.alarmFired;
+    // 期限が過去なら、保存された alarmAt と同じでも設定し直す（アラームの処理が失敗してやり直しが尽きた場合など、
+    // 実際のアラームがもうないかもしれない。未来の alarmAt はまだ鳴っていないので、アラームは残っている）
+    const alarmChanged = want !== s.alarmAt || tx.alarmFired || (want !== null && want <= tx.now);
     s.alarmAt = want;
     // 外へ見える内容が変わったときだけ版番号を上げて送る（応答確認の時刻など内部の値だけの変化では送らない）
     const changed = publicSignature(s) !== tx.beforePublic;
@@ -646,7 +673,7 @@ export class Room extends DurableObject<Env> {
     }
     if (alarmChanged) {
       if (want === null) void this.ctx.storage.deleteAlarm();
-      else void this.ctx.storage.setAlarm(want);
+      else void this.ctx.storage.setAlarm(want + s.timing.testAlarmLagMs);
     }
     for (const o of this.openSockets()) {
       if (tx.closes.some((c) => c.ws === o.ws)) continue;
