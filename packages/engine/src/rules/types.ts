@@ -3,10 +3,11 @@
 import type { CardId } from '../cards.ts';
 import type {
   Effect,
+  LeaderRule,
   FieldPlay,
   GameState,
   MatchState,
-  Pending,
+  ReturnRoundPending,
   Play,
   RuleId,
   SeatId,
@@ -34,10 +35,22 @@ export type RuleModule = {
   requires?: readonly RuleId[];
   /** 有効にする手の形（階段）。 */
   shapes?: readonly Shape[];
-  /** 出せる手を絞る（マーク縛り）。 */
+  /** 出せる手を絞る（マーク縛り、激縛り、ダイヤの3の義務）。 */
   restrictPlay?(ctx: RuleCtx, play: Play, seat: SeatId): Violation | null;
-  /** 解釈を補う（縛り中に、ジョーカーが代わりにするマークを決める）。 */
+  /** 解釈を補う（縛り中に、ジョーカーが代わりにするマークや数字を決める）。 */
   refinePlay?(ctx: RuleCtx, play: Play): Play;
+  /** この手が無視する制限の種類（砂嵐）。場の制限（種類・枚数・強さ）も無視できる。 */
+  playIgnores?(ctx: RuleCtx, play: Play): readonly ViolationKind[];
+  /** 場の種類と枚数に関係なく、出せる手の候補に足すカードの組（砂嵐）。 */
+  extraSets?(ctx: RuleCtx, seat: SeatId): CardId[][];
+  /** 手番の対戦を始めるとき（交換のあと）に、最初の親を決める。決めないなら null。 */
+  chooseStarter?(ctx: RuleCtx): SeatId | null;
+  /** 手番の対戦を始めるとき、最初の1手に含める義務のあるカード（ダイヤの3）。なければ null。 */
+  openingCard?(ctx: RuleCtx): CardId | null;
+  /** 最初の親の決め方を変えるルール: gameStart の出来事に載せる名前。 */
+  leaderRule?: LeaderRule;
+  /** 手札から選ぶ効果（handChoice）を持つルール: 選んだカードの行き先。give = 次の人へ渡す、discard = 捨て札へ。 */
+  choiceTarget?: 'give' | 'discard';
   /** 出したあとの効果（8切り、革命、J バック、縛りの成立、返しの一周の開始）。 */
   afterPlay?(ctx: RuleCtx, played: FieldPlay, prev: FieldPlay | null): Effect[];
   /** 反則上がりの判定。判定に使う向きは、出す直前のもの（decisions §14.4）。 */
@@ -50,12 +63,14 @@ export type RuleModule = {
   canStartReturnRound?(ctx: RuleCtx, source: SeatId): boolean;
   /** 返しの一周を持つルール: 直前で省いたときの効果（残りの効果の前に処理する）。 */
   onReturnRoundSkipped?(ctx: RuleCtx, source: SeatId): Effect[];
+  /** 返しの一周を持つルール: 返したカードを場ではなく捨て札に置く（4止め）。 */
+  returnToDiscard?: boolean;
   /** 返しの一周を持つルール: 返しの手が無視する制限の種類。 */
   returnIgnores?: readonly ViolationKind[];
   /** 返しの一周を持つルール: その席が返せる手の候補（制限で絞る前）。 */
-  returnOptions?(ctx: RuleCtx, seat: SeatId, pending: Pending): Play[];
+  returnOptions?(ctx: RuleCtx, seat: SeatId, pending: ReturnRoundPending): Play[];
   /** 返しの一周を持つルール: 誰かが返したときの効果（残りの効果を置き換える）。 */
-  onReturned?(ctx: RuleCtx, seat: SeatId, play: Play, pending: Pending): Effect[];
+  onReturned?(ctx: RuleCtx, seat: SeatId, play: Play, pending: ReturnRoundPending): Effect[];
   /** 返しの一周を持つルール: 全員がスキップしたときの効果（残りの効果の前に処理する）。 */
-  onReturnFailed?(ctx: RuleCtx, pending: Pending): Effect[];
+  onReturnFailed?(ctx: RuleCtx, pending: ReturnRoundPending): Effect[];
 };

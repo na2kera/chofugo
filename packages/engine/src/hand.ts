@@ -94,8 +94,17 @@ export function hasJoker(p: Play): boolean {
   return p.jokers.length > 0;
 }
 
-export function isJokerSingle(p: Play): boolean {
-  return p.shape === 'group' && p.cards.length === 1 && p.rank === null;
+/**
+ * 組の有効な数字（design-2 §6.1）。ジョーカーだけの組でも、激縛り中に代わりの数字を決めていればその数字。
+ * 強さの比較・いちばん弱いカードの強さ・激縛りの判定と連番の更新に使う。数字の効果の判定には使わない（play.rank のまま）。
+ */
+export function groupRank(p: GroupPlay): Rank | null {
+  return p.rank ?? p.jokers[0]?.rank ?? null;
+}
+
+/** 何にも負けないジョーカーだけの手か（数字を決めていないジョーカーだけの組）。スペ3返しと「すぐ流す」の判定に使う。 */
+export function isUnbeatableJokers(p: Play): boolean {
+  return p.shape === 'group' && p.rank === null && p.jokers.every((j) => j.rank === null);
 }
 
 /** 本物のカードのマーク（組はマーク順に並べる。階段は1つ）。 */
@@ -116,8 +125,10 @@ export function realSuits(p: Play): Suit[] {
  */
 export function beats(a: Play, b: Play, reversed: boolean): boolean {
   if (a.shape === 'group' && b.shape === 'group') {
-    const sa = a.rank === null ? Infinity : rankStrength(a.rank, reversed);
-    const sb = b.rank === null ? Infinity : rankStrength(b.rank, reversed);
+    const ra = groupRank(a);
+    const rb = groupRank(b);
+    const sa = ra === null ? Infinity : rankStrength(ra, reversed);
+    const sb = rb === null ? Infinity : rankStrength(rb, reversed);
     return sa > sb;
   }
   if (a.shape === 'run' && b.shape === 'run') {
@@ -128,7 +139,10 @@ export function beats(a: Play, b: Play, reversed: boolean): boolean {
 
 /** 手のいちばん弱いカードの強さ（その時点の向き）。CPU の並べ替えで使う。 */
 export function weakestStrength(p: Play, reversed: boolean): number {
-  if (p.shape === 'group') return p.rank === null ? Infinity : rankStrength(p.rank, reversed);
+  if (p.shape === 'group') {
+    const r = groupRank(p);
+    return r === null ? Infinity : rankStrength(r, reversed);
+  }
   return rankStrength(reversed ? p.high : p.low, reversed);
 }
 

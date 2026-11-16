@@ -5,6 +5,8 @@ import { deepClone } from './clone.ts';
 import { decideAuto } from './auto.ts';
 import { giveCards, exchangeTaskFor, isValidExchangeGive, startExchange } from './exchange.ts';
 import {
+  applyStarterRules,
+  doChoose,
   doPass,
   doRespond,
   doTurnPlay,
@@ -79,7 +81,7 @@ export function createMatch(config: MatchConfig, seed: Seed): CreateMatchResult 
   if (!isValidSeed(seed)) return { ok: false, error: { code: 'invalidSeed', message: 'seed must be four uint32 values, not all zero' } };
   const cfg: MatchConfig = { matchId: config.matchId, rules: config.rules.slice(), gameCount: config.gameCount };
   const state: MatchState = {
-    version: 1,
+    version: 2,
     matchId: cfg.matchId,
     config: cfg,
     rng: rngFromSeed(seed),
@@ -123,6 +125,7 @@ function startGame(c: Ctx): void {
     field: [],
     lastPlayer: null,
     direction: 1,
+    orderReversed: false,
     passed: [false, false, false, false],
     topOrder: [],
     bottomOrder: [],
@@ -130,6 +133,8 @@ function startGame(c: Ctx): void {
     revolution: false,
     tempReverse: false,
     suitLock: null,
+    seqLock: null,
+    openingCard: null,
     pending: null,
     awaiting: [],
     firstPlaceHandCounts: null,
@@ -138,10 +143,14 @@ function startGame(c: Ctx): void {
   };
   s.game = game;
   s.phase = 'play';
-  emit(c, { type: 'gameStart', leaderRule: prev === null ? 'random' : 'prevLowest' });
+  // 乱数は、その1と同じ時点で同じ回数だけ引いてある。モジュールが親を決めるときは、その結果を使わない（design-2 §2.3）。
+  // 交換があるときは、ここで決まる親は仮の値で、交換のあとに決め直す（exchange.ts）
+  applyStarterRules(c);
+  const leaderRule = c.mods.find((m) => m.leaderRule !== undefined)?.leaderRule ?? (prev === null ? 'random' : 'prevLowest');
+  emit(c, { type: 'gameStart', leaderRule });
   emit(c, { type: 'deal', counts: hands.map((h) => h.length), hands: hands.map((h) => h.slice()) });
   if (prev !== null) startExchange(c, prev);
-  else startTurn(c, starter);
+  else startTurn(c, game.starter);
 }
 
 // ---------- 操作の適用 ----------
@@ -255,6 +264,19 @@ function dispatch(c: Ctx, a: Action, fromAuto: boolean): ActionError | null {
       const task = exchangeTaskFor(c, w.seat);
       if (task === null) return err('invalidExchange', 'nothing to give');
       giveCards(c, task.pairIndex, a.cards);
+      return null;
+    }
+    case 'choose': {
+      const w = checkAwait(c, a.seat, a.awaitId, 'choice');
+      if (isError(w)) return w;
+      const p = gameOf(c).pending;
+      if (p === null || p.type !== 'choice') return err('wrongAwaitKind', 'nothing to choose');
+      if (!isCardList(a.cards)) return err('malformed', 'cards must be a list');
+      if (new Set(a.cards).size !== a.cards.length) return err('invalidChoice', 'duplicate cards');
+      if (a.cards.length > p.max) return err('invalidChoice', `at most ${p.max} cards`);
+      const hand = gameOf(c).hands[w.seat] ?? [];
+      if (!a.cards.every((id) => hand.includes(id))) return err('cardNotInHand', 'card not in hand');
+      doChoose(c, a.cards);
       return null;
     }
     case 'auto': {

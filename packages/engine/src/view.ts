@@ -48,9 +48,15 @@ function myAwaiting(state: MatchState, seat: SeatId): MyAwaiting | null {
     return { awaitId: w.id, kind: 'turn', leader, plays, canPass: !leader || plays.length === 0 };
   }
   if (w.kind === 'respond') {
-    const rule = g.pending?.rule;
-    if (rule === undefined) return null;
-    return { awaitId: w.id, kind: 'respond', rule, plays: legalPlays(state, seat) };
+    const p = g.pending;
+    if (p === null || p.type !== 'returnRound') return null;
+    return { awaitId: w.id, kind: 'respond', rule: p.rule, plays: legalPlays(state, seat) };
+  }
+  if (w.kind === 'choice') {
+    // 候補は手札そのものなので一覧にしない（design-2 §2.7）
+    const p = g.pending;
+    if (p === null || p.type !== 'choice') return null;
+    return { awaitId: w.id, kind: 'choice', rule: p.rule, max: p.max, to: p.to };
   }
   const task = exchangeTaskFor(makeCtx(state), seat);
   if (task === null) return null;
@@ -98,6 +104,7 @@ export function viewFor(state: MatchState, seat: SeatId): PlayerView {
       field: deepClone(g.field),
       lastPlayer: g.lastPlayer,
       direction: g.direction,
+      orderReversed: g.orderReversed,
       passed: g.passed.slice(),
       places: SEATS.map((s) => placeOf(g, s)),
       placeReasons: g.placeReasons.slice(),
@@ -105,8 +112,11 @@ export function viewFor(state: MatchState, seat: SeatId): PlayerView {
       tempReverse: g.tempReverse,
       reversed: isReversed(g),
       suitLock: g.suitLock === null ? null : g.suitLock.slice(),
+      seqLock: g.seqLock === null ? null : { suits: g.seqLock.suits.slice(), rank: g.seqLock.rank },
+      openingCard: g.openingCard,
+      choice: pending !== null && pending.type === 'choice' ? { rule: pending.rule, seat: pending.seat, to: pending.to } : null,
       returnRound:
-        pending === null
+        pending === null || pending.type !== 'returnRound'
           ? null
           : { rule: pending.rule, source: pending.source, asking: pending.queue[0] ?? null },
       exchange:
@@ -146,6 +156,19 @@ export function eventsFor(events: readonly GameEvent[], seat: SeatId): VisibleEv
         seq: e.seq,
         gameNo: e.gameNo,
         type: 'exchange',
+        from: e.from,
+        to: e.to,
+        count: e.cards.length,
+        cards: party ? e.cards.slice() : null,
+      };
+    }
+    if (e.type === 'give') {
+      // 7渡し: 全員に見えるのは誰から誰へ何枚。中身は渡した人と受け取った人だけ（design-2 §2.7）
+      const party = e.from === seat || e.to === seat;
+      return {
+        seq: e.seq,
+        gameNo: e.gameNo,
+        type: 'give',
         from: e.from,
         to: e.to,
         count: e.cards.length,

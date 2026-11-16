@@ -1,7 +1,7 @@
 // カード交換（decisions §3.2、§14.5）。
 
 import { compareCardIds, isJokerId, normalStrength, sortCardIds, type CardId } from './cards.ts';
-import { emit, gameOf, startTurn, type Ctx } from './game.ts';
+import { applyStarterRules, emit, gameOf, startTurn, type Ctx } from './game.ts';
 import { sample } from './rng.ts';
 import { SEATS, type ExchangePair, type Place, type SeatId } from './types.ts';
 
@@ -124,6 +124,8 @@ export function giveCards(c: Ctx, pairIndex: number, cards: readonly CardId[]): 
     emit(c, { type: 'exchangeDone' });
     c.s.phase = 'play';
     g.awaiting = [];
+    // 最初の親と義務のカードは、交換が終わった時点の手札で決め直す（design-2 §2.3）
+    applyStarterRules(c);
     startTurn(c, g.starter);
   }
 }

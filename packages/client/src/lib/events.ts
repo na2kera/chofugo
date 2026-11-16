@@ -155,6 +155,15 @@ export function eventMessage(e: VisibleEvent, nameOf: NameOf): string | null {
     case 'gameEnd':
     case 'matchEnd':
       return null;
+    // その2の出来事（engine の型に合わせて網羅だけ足す。メッセージは client の作業で足す）
+    case 'seqLock':
+    case 'orderReverse':
+    case 'choiceStart':
+    case 'give':
+    case 'discard':
+    case 'choiceSkip':
+    case 'skipped':
+      return null;
   }
 }
 

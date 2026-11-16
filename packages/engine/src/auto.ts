@@ -1,6 +1,6 @@
 // auto 操作の決め方（timeout: decisions §8、cpu: design §3.6・decisions §14.9 を差し替えた §14.14）。
 
-import { compareCardIds } from './cards.ts';
+import { cardOf, compareCardIds, rankStrength, type CardId } from './cards.ts';
 import { autoLowerGive, autoUpperGive, exchangeTaskFor } from './exchange.ts';
 import { gameOf, isReversed, legalReturnPlays, legalTurnPlays, topPlay, type Ctx } from './game.ts';
 import { weakestStrength } from './hand.ts';
@@ -34,6 +34,18 @@ function playAction(w: Awaiting, lp: LegalPlay): Action {
   return { type: 'play', seat: w.seat, awaitId: w.id, cards: lp.cards, shape: lp.shape, confirmFoul: lp.foul };
 }
 
+/** 7渡し・10捨ての CPU: その時点の向きでいちばん弱いカードから max 枚まで。ジョーカーは最後（design-2 §2.6）。 */
+export function cpuChoice(hand: readonly CardId[], max: number, reversed: boolean): CardId[] {
+  const strength = (id: CardId): number => {
+    const card = cardOf(id);
+    return card === null || card.kind === 'joker' ? Infinity : rankStrength(card.rank, reversed);
+  };
+  return hand
+    .slice()
+    .sort((a, b) => strength(a) - strength(b) || compareCardIds(a, b))
+    .slice(0, max);
+}
+
 /** 待ち w に対して、決まりどおりの操作を作る（乱数を使う場合は c.s.rng を進める）。 */
 export function decideAuto(c: Ctx, w: Awaiting, policy: 'timeout' | 'cpu'): Action | null {
   const g = gameOf(c);
@@ -61,6 +73,13 @@ export function decideAuto(c: Ctx, w: Awaiting, policy: 'timeout' | 'cpu'): Acti
       if (r !== undefined) return { type: 'respond', seat: w.seat, awaitId: w.id, cards: r.cards };
     }
     return { type: 'respond', seat: w.seat, awaitId: w.id, cards: null };
+  }
+  if (w.kind === 'choice') {
+    const p = g.pending;
+    if (p === null || p.type !== 'choice') return null;
+    // 時間切れは渡さない・捨てない（§8）
+    const cards = policy === 'cpu' ? cpuChoice(g.hands[w.seat] ?? [], p.max, isReversed(g)) : [];
+    return { type: 'choose', seat: w.seat, awaitId: w.id, cards };
   }
   const task = exchangeTaskFor(c, w.seat);
   if (task === null) return null;

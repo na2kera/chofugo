@@ -2,11 +2,12 @@
 // 毎手で不変条件（helpers.ts の checkInvariants）を確かめる。
 
 import { describe, expect, it } from 'vitest';
-import { IMPLEMENTED_RULE_IDS, type RuleId } from './index.ts';
+import { DAIFUGO_MODE_RULE_IDS, IMPLEMENTED_RULE_IDS, type RuleId } from './index.ts';
 import { cfg, runMatch, type Policy } from './test/helpers.ts';
 
 function rulesOf(mask: number): RuleId[] {
-  return IMPLEMENTED_RULE_IDS.filter((_, i) => (mask & (1 << i)) !== 0);
+  // 列挙の元は定番8種に固定する（実装済みが16種になっても、定番8種の検査のまま。design-2 §6.4）
+  return DAIFUGO_MODE_RULE_IDS.filter((_, i) => (mask & (1 << i)) !== 0);
 }
 
 describe('自動対戦（全256通り）', () => {

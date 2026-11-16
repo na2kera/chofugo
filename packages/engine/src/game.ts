@@ -7,6 +7,7 @@ import {
   enumerateGroupSets,
   enumerateRunSets,
   interpretations,
+  isUnbeatableJokers,
   strongerRun,
 } from './hand.ts';
 import { activeModules, findModule, type RuleCtx, type RuleModule } from './rules/index.ts';
@@ -136,18 +137,29 @@ function restriction(c: Ctx, play: Play, seat: SeatId, ignore: readonly Violatio
   return null;
 }
 
-function fieldViolation(g: GameState, play: Play): Violation | null {
+/** 場の制限（種類・枚数・強さ）。ignore にある種類は無視する。 */
+function fieldViolation(g: GameState, play: Play, ignore: readonly ViolationKind[]): Violation | null {
   const top = topPlay(g);
   if (top === null) return null;
-  if (top.play.shape !== play.shape) return { kind: 'fieldShape' };
-  if (top.play.cards.length !== play.cards.length) return { kind: 'fieldSize' };
-  if (!beats(play, top.play, isReversed(g))) return { kind: 'notStronger' };
-  return null;
+  const check = (kind: ViolationKind, ok: boolean): Violation | null => (ok || ignore.includes(kind) ? null : { kind });
+  return (
+    check('fieldShape', top.play.shape === play.shape) ??
+    check('fieldSize', top.play.cards.length === play.cards.length) ??
+    check('notStronger', beats(play, top.play, isReversed(g)))
+  );
 }
 
-/** 手番で出す手として正しいか。 */
+/** この手が無視する制限の種類（有効なモジュールの playIgnores を集める。砂嵐）。 */
+function playIgnores(c: Ctx, play: Play): ViolationKind[] {
+  const out: ViolationKind[] = [];
+  for (const m of c.mods) for (const k of m.playIgnores?.(ruleCtx(c), play) ?? []) if (!out.includes(k)) out.push(k);
+  return out;
+}
+
+/** 手番で出す手として正しいか。場の制限とモジュールの制限の両方から、無視する種類を除く（design-2 §2.3）。 */
 function turnViolation(c: Ctx, seat: SeatId, play: Play): Violation | null {
-  return fieldViolation(gameOf(c), play) ?? restriction(c, play, seat, []);
+  const ignore = playIgnores(c, play);
+  return fieldViolation(gameOf(c), play, ignore) ?? restriction(c, play, seat, ignore);
 }
 
 /** 反則上がりになるか（出す直前の状態で判定する）。 */
@@ -190,20 +202,37 @@ export function interpretTurnPlay(c: Ctx, seat: SeatId, cards: readonly CardId[]
   return { ok: true, play: chosen };
 }
 
-/** 手番の席が出せる手の一覧。手札と全員に見えている情報だけで決まる。 */
+/**
+ * 手番の席が出せる手の一覧。手札と全員に見えている情報だけで決まる。
+ * 場の種類と枚数で列挙した組に、モジュールの extraSets（砂嵐）の組を足す（同じカード・同じ形は1つにまとめる）。
+ */
 export function legalTurnPlays(c: Ctx, seat: SeatId): LegalPlay[] {
   const g = gameOf(c);
   const hand = g.hands[seat] ?? [];
   const top = topPlay(g);
   const size = top === null ? null : top.play.cards.length;
-  const shapes = enabledShapes(c).filter((sh) => top === null || sh === top.play.shape);
+  const all = enabledShapes(c);
+  const shapes = all.filter((sh) => top === null || sh === top.play.shape);
   const out: LegalPlay[] = [];
+  const seen = new Set<string>();
+  const add = (cards: CardId[], sh: Shape) => {
+    const key = `${sh}:${cards.join(',')}`;
+    if (seen.has(key)) return;
+    const r = interpretTurnPlay(c, seat, cards, sh);
+    if (!r.ok) return;
+    seen.add(key);
+    out.push({ cards, shape: sh, play: r.play, foul: isFoulFinish(c, seat, r.play) });
+  };
   for (const sh of shapes) {
     const sets = sh === 'group' ? enumerateGroupSets(hand, size) : enumerateRunSets(hand, size);
-    for (const cards of sets) {
-      const r = interpretTurnPlay(c, seat, cards, sh);
-      if (!r.ok) continue;
-      out.push({ cards, shape: sh, play: r.play, foul: isFoulFinish(c, seat, r.play) });
+    for (const cards of sets) add(cards, sh);
+  }
+  const rc = ruleCtx(c);
+  for (const m of c.mods) {
+    for (const set of m.extraSets?.(rc, seat) ?? []) {
+      const cards = sortCardIds(set);
+      if (!cards.every((id) => hand.includes(id))) continue;
+      for (const sh of all) add(cards, sh);
     }
   }
   return out;
@@ -239,22 +268,54 @@ function startRespond(c: Ctx, seat: SeatId): void {
   g.awaiting = [{ id: c.s.nextAwaitId++, seat, kind: 'respond', timer: 'respond' }];
 }
 
+function startChoiceAwait(c: Ctx, seat: SeatId): void {
+  const g = gameOf(c);
+  g.awaiting = [{ id: c.s.nextAwaitId++, seat, kind: 'choice', timer: 'choice' }];
+}
+
+// ---------- 最初の親 ----------
+
+/**
+ * 手番の対戦を始めるとき（交換のあと。交換のない1ゲーム目は配った直後）に、モジュールに最初の親と義務のカードを聞く。
+ * どのモジュールも親を決めなければ、g.starter（その1の決まりで決めた値）のまま（design-2 §2.3）。
+ */
+export function applyStarterRules(c: Ctx): void {
+  const g = gameOf(c);
+  const rc = ruleCtx(c);
+  for (const m of c.mods) {
+    const s = m.chooseStarter?.(rc) ?? null;
+    if (s !== null) {
+      g.starter = s;
+      break;
+    }
+  }
+  let opening: CardId | null = null;
+  for (const m of c.mods) {
+    opening = m.openingCard?.(rc) ?? null;
+    if (opening !== null) break;
+  }
+  g.openingCard = opening;
+}
+
 // ---------- 効果 ----------
 
+/** 効果の優先順（小さいほうが先。同じ値は集めた順。design-2 §2.2）。 */
 const EFFECT_PRIORITY: Record<Effect['type'], number> = {
   toggleRevolution: 0, // 革命を先に（§6.0.1）
   setTempReverse: 1, // 数字の効果
   setSuitLock: 1,
   clearSuitLock: 1,
-  forceLast: 2,
-  returnRound: 3, // 上がりの判定のあと（§14.3）
-  flush: 4,
+  setSeqLock: 1,
+  clearSeqLock: 1,
+  setOrderReverse: 1,
+  clearOpening: 1,
+  handChoice: 2, // 自分の手札を動かす効果（7渡し・10捨て）
+  finishCheck: 3, // 上がりの判定（返しの一周より前、§14.3）
+  forceLast: 3,
+  returnRound: 4,
+  skip: 5,
+  flush: 6,
 };
-
-/** 上がりの判定より前に処理する効果か。 */
-function isPreFinish(e: Effect): boolean {
-  return EFFECT_PRIORITY[e.type] < EFFECT_PRIORITY.returnRound;
-}
 
 function sortEffects(effects: Effect[]): Effect[] {
   return effects
@@ -263,7 +324,7 @@ function sortEffects(effects: Effect[]): Effect[] {
     .map((x) => x.e);
 }
 
-/** 状態だけを変える効果を処理する。ゲームが終わったら true。 */
+/** 状態だけを変える効果を処理する。ゲームが終わったら true。流れを変える効果は runEffects で扱う。 */
 function applyStateEffect(c: Ctx, e: Effect): boolean {
   const g = gameOf(c);
   switch (e.type) {
@@ -282,52 +343,92 @@ function applyStateEffect(c: Ctx, e: Effect): boolean {
     case 'clearSuitLock':
       g.suitLock = null;
       return false;
+    case 'setSeqLock': {
+      const established = g.seqLock === null;
+      g.seqLock = { suits: e.suits.slice(), rank: e.rank };
+      // 出来事は成立したときだけ（連番の更新では出さない）
+      if (established) emit(c, { type: 'seqLock', suits: e.suits.slice() });
+      return false;
+    }
+    case 'clearSeqLock':
+      g.seqLock = null;
+      return false;
+    case 'setOrderReverse':
+      g.orderReversed = e.active;
+      g.direction = e.active ? -1 : 1;
+      emit(c, { type: 'orderReverse', active: e.active });
+      return false;
+    case 'clearOpening':
+      g.openingCard = null;
+      return false;
     case 'forceLast':
       return placeSeat(c, e.seat, e.reason);
+    case 'handChoice':
+    case 'finishCheck':
     case 'returnRound':
+    case 'skip':
     case 'flush':
-      return false; // 流れを変える効果は runFlowEffects で扱う
+      return false;
   }
 }
 
 /**
- * 上がりの判定より後の効果（返しの一周、場の流れ）を順に処理する。
- * どれも流れを変えなければ、source の次の人へ手番を送る。
+ * 効果の列を先頭から1つずつ処理する（design-2 §2.2）。source は手を出した人。
+ * 待ちが必要になったら、残りを pending.rest に保存して止まる。列を最後まで処理したら、source の次へ手番を送る。
  */
-function runFlowEffects(c: Ctx, effects: Effect[], source: SeatId): void {
+export function runEffects(c: Ctx, source: SeatId, effects: readonly Effect[]): void {
   const g = gameOf(c);
+  let skip = 0;
   for (let i = 0; i < effects.length; i++) {
     const e = effects[i] as Effect;
-    if (e.type === 'returnRound') {
-      const rest = effects.slice(i + 1);
-      // 省く条件は、一周を始める直前の最新の状態で評価し直す（decisions §14.14）
-      const mod = findModule(e.rule);
-      if (mod?.canStartReturnRound !== undefined && !mod.canStartReturnRound(ruleCtx(c), source)) {
-        runFlowEffects(c, [...(mod.onReturnRoundSkipped?.(ruleCtx(c), source) ?? []), ...rest], source);
+    switch (e.type) {
+      case 'handChoice': {
+        if ((g.hands[source] ?? []).length === 0) break; // 手札が0枚なら選択をはさまない（§16.4）
+        const mod = findModule(e.rule);
+        // 7渡しの相手は、待ちを作る時点の向きで次の、まだ上がっていない人（パス済みでもよい）
+        const to = mod?.choiceTarget === 'give' ? nextSeatWhere(g, source, (s) => isActive(g, s)) : null;
+        g.pending = { type: 'choice', rule: e.rule, seat: source, max: e.max, to, rest: effects.slice(i + 1) };
+        emit(c, { type: 'choiceStart', rule: e.rule, seat: source, max: e.max, to });
+        startChoiceAwait(c, source);
         return;
       }
-      const participants: SeatId[] = [];
-      for (let k = 1; k < 4; k++) {
-        const s = stepSeat(g, source, k);
-        if (isActive(g, s)) participants.push(s);
-      }
-      emit(c, { type: 'returnRoundStart', rule: e.rule, source, participants: participants.slice() });
-      g.pending = { type: 'returnRound', rule: e.rule, source, queue: participants, rest };
-      // ここに来るときは残りが2人以上いるので、参加者は必ず1人以上いる（防御のための分岐）
-      if (participants.length === 0) {
-        finishReturnRound(c, null, null);
+      case 'finishCheck':
+        if ((g.hands[source] ?? []).length === 0 && placeSeat(c, source, e.foul ? 'foul' : 'finish')) return;
+        break;
+      case 'returnRound': {
+        const rest = effects.slice(i + 1);
+        // 省く条件は、一周を始める直前の最新の状態で評価し直す（decisions §14.14）
+        const mod = findModule(e.rule);
+        if (mod?.canStartReturnRound !== undefined && !mod.canStartReturnRound(ruleCtx(c), source)) {
+          runEffects(c, source, [...(mod.onReturnRoundSkipped?.(ruleCtx(c), source) ?? []), ...rest]);
+          return;
+        }
+        const participants: SeatId[] = [];
+        for (let k = 1; k < 4; k++) {
+          const s = stepSeat(g, source, k);
+          if (isActive(g, s)) participants.push(s);
+        }
+        emit(c, { type: 'returnRoundStart', rule: e.rule, source, participants: participants.slice() });
+        g.pending = { type: 'returnRound', rule: e.rule, source, queue: participants, rest };
+        // ここに来るときは残りが2人以上いるので、参加者は必ず1人以上いる（防御のための分岐）
+        if (participants.length === 0) {
+          finishReturnRound(c, null, null);
+          return;
+        }
+        startRespond(c, participants[0] as SeatId);
         return;
       }
-      startRespond(c, participants[0] as SeatId);
-      return;
+      case 'skip':
+        skip += e.count; // その3で特権のスキップと合算する
+        break;
+      case 'flush':
+        flushField(c, e.leader, e.reason); // 飛ばす人数は捨てる
+        return;
+      default:
+        if (applyStateEffect(c, e)) return;
     }
-    if (e.type === 'flush') {
-      flushField(c, e.leader, e.reason);
-      return;
-    }
-    if (applyStateEffect(c, e)) return;
   }
-  advanceFrom(c, source);
+  advanceFrom(c, source, skip);
 }
 
 // ---------- 場 ----------
@@ -354,20 +455,36 @@ function clearFieldEffects(c: Ctx): void {
   for (const e of sortEffects(effects)) applyStateEffect(c, e);
 }
 
-/** 手番を from の次へ送る。最後に出した人の席に着いたら場が流れる（§14.1）。 */
-function advanceFrom(c: Ctx, from: SeatId): void {
+/**
+ * 手番を from の次へ送る。最後に出した人の席に着いたら場が流れる（§14.1）。
+ * skip（K スキップ）が残っていれば、残っていてパスしていない席を1人ずつ飛ばす（パス扱いにしない。design-2 §2.4）。
+ */
+function advanceFrom(c: Ctx, from: SeatId, skip = 0): void {
   const g = gameOf(c);
+  let remaining = skip;
+  const skipped: SeatId[] = [];
+  const emitSkipped = () => {
+    if (skipped.length > 0) emit(c, { type: 'skipped', by: from, seats: skipped.slice() });
+  };
   for (let i = 1; i <= 4; i++) {
     const s = stepSeat(g, from, i);
     if (s === g.lastPlayer) {
+      emitSkipped();
       flushField(c, s, 'allPassed');
       return;
     }
     if (isActive(g, s) && g.passed[s] !== true) {
+      if (remaining > 0) {
+        remaining--;
+        skipped.push(s);
+        continue;
+      }
+      emitSkipped();
       startTurn(c, s);
       return;
     }
   }
+  emitSkipped();
   // 場が空なのに手番を送る場面はない（親のパスは leaderPass で扱う）
   const fallback = selfOrNextActive(g, stepSeat(g, from, 1));
   if (fallback !== null) startTurn(c, fallback);
@@ -387,19 +504,15 @@ export function doTurnPlay(c: Ctx, seat: SeatId, play: Play): void {
   g.awaiting = [];
   emit(c, { type: 'play', seat, play, foul });
 
+  // ここまでは、どのモジュールも「出す直前の向き・効果を処理する前の状態」を見る
   const effects: Effect[] = [];
   for (const m of c.mods) effects.push(...(m.afterPlay?.(ruleCtx(c), fp, prev) ?? []));
-  // ジョーカーだけの手（1枚出し・2枚組）に返す手段がなければ、すぐ場を流す（§2.5、§14.14）
-  if (play.shape === 'group' && play.rank === null && !effects.some((e) => e.type === 'returnRound' || e.type === 'flush')) {
+  // 何にも負けないジョーカーだけの手（1枚出し・2枚組）に返す手段がなければ、すぐ場を流す（§2.5、§14.14）
+  if (isUnbeatableJokers(play) && !effects.some((e) => e.type === 'returnRound' || e.type === 'flush')) {
     effects.push({ type: 'flush', leader: seat, reason: 'jokerUnbeatable' });
   }
-  const sorted = sortEffects(effects);
-  for (const e of sorted.filter(isPreFinish)) if (applyStateEffect(c, e)) return;
-  // 上がりの判定（返しの一周より前、§14.3）
-  if ((g.hands[seat] ?? []).length === 0) {
-    if (placeSeat(c, seat, foul ? 'foul' : 'finish')) return;
-  }
-  runFlowEffects(c, sorted.filter((e) => !isPreFinish(e)), seat);
+  effects.push({ type: 'finishCheck', foul });
+  runEffects(c, seat, sortEffects(effects));
 }
 
 /** 手番でパスする（検証は済んでいる前提）。 */
@@ -423,7 +536,7 @@ export function doPass(c: Ctx, seat: SeatId): void {
 export function doRespond(c: Ctx, seat: SeatId, play: Play | null): void {
   const g = gameOf(c);
   const p = g.pending;
-  if (p === null) return;
+  if (p === null || p.type !== 'returnRound') return;
   g.awaiting = [];
   if (play === null) {
     emit(c, { type: 'respondSkip', seat });
@@ -434,16 +547,22 @@ export function doRespond(c: Ctx, seat: SeatId, play: Play | null): void {
     return;
   }
   removeFromHand(g, seat, play.cards);
-  g.field.push({ seat, play, via: 'respond' });
-  g.lastPlayer = seat;
-  emit(c, { type: 'respond', seat, play });
+  if (findModule(p.rule)?.returnToDiscard === true) {
+    // 返したカードは捨て札へ。場のいちばん上と「最後に出した人」はそのまま（4止め、§16.2）
+    g.discard.push(...play.cards);
+    emit(c, { type: 'respond', seat, play, toDiscard: true });
+  } else {
+    g.field.push({ seat, play, via: 'respond' });
+    g.lastPlayer = seat;
+    emit(c, { type: 'respond', seat, play });
+  }
   finishReturnRound(c, seat, play);
 }
 
 function finishReturnRound(c: Ctx, by: SeatId | null, play: Play | null): void {
   const g = gameOf(c);
   const p = g.pending;
-  if (p === null) return;
+  if (p === null || p.type !== 'returnRound') return;
   g.pending = null;
   emit(c, { type: 'returnRoundEnd', rule: p.rule, returnedBy: by });
   const mod = findModule(p.rule);
@@ -453,10 +572,33 @@ function finishReturnRound(c: Ctx, by: SeatId | null, play: Play | null): void {
     if ((g.hands[by] ?? []).length === 0) {
       if (placeSeat(c, by, 'finish')) return;
     }
-    runFlowEffects(c, mod?.onReturned?.(rc, by, play, p) ?? [], p.source);
+    runEffects(c, p.source, mod?.onReturned?.(rc, by, play, p) ?? []);
     return;
   }
-  runFlowEffects(c, [...(mod?.onReturnFailed?.(rc, p) ?? []), ...p.rest], p.source);
+  runEffects(c, p.source, [...(mod?.onReturnFailed?.(rc, p) ?? []), ...p.rest]);
+}
+
+/** 7渡し・10捨てで選ぶ（検証は済んでいる前提）。cards が空なら渡さない・捨てない。 */
+export function doChoose(c: Ctx, cards: readonly CardId[]): void {
+  const g = gameOf(c);
+  const p = g.pending;
+  if (p === null || p.type !== 'choice') return;
+  g.awaiting = [];
+  g.pending = null;
+  const chosen = sortCardIds(cards);
+  if (chosen.length === 0) {
+    emit(c, { type: 'choiceSkip', seat: p.seat, rule: p.rule });
+  } else {
+    removeFromHand(g, p.seat, chosen);
+    if (p.to !== null) {
+      g.hands[p.to] = sortCardIds([...(g.hands[p.to] ?? []), ...chosen]); // 受け取ったカードで手札を並べ直す
+      emit(c, { type: 'give', from: p.seat, to: p.to, cards: chosen });
+    } else {
+      g.discard.push(...chosen);
+      emit(c, { type: 'discard', seat: p.seat, rule: p.rule, cards: chosen });
+    }
+  }
+  runEffects(c, p.seat, p.rest);
 }
 
 function removeFromHand(g: GameState, seat: SeatId, cards: readonly CardId[]): void {
@@ -487,7 +629,7 @@ export function placeSeat(c: Ctx, seat: SeatId, reason: PlaceReason): boolean {
   const place = placeOf(g, seat) as Place;
   emit(c, { type: 'placed', seat, place, reason });
   if (g.awaiting.some((a) => a.seat === seat)) g.awaiting = g.awaiting.filter((a) => a.seat !== seat);
-  if (g.pending !== null) g.pending.queue = g.pending.queue.filter((s) => s !== seat);
+  if (g.pending !== null && g.pending.type === 'returnRound') g.pending.queue = g.pending.queue.filter((s) => s !== seat);
 
   if (place === 1) {
     g.firstPlaceHandCounts = g.hands.map((h) => h.length);

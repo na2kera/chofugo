@@ -32,8 +32,11 @@ export const ALL_RULE_IDS = [
 ] as const;
 export type RuleId = (typeof ALL_RULE_IDS)[number];
 
-/** その1で実装済みのルール（定番8種）。 */
-export const IMPLEMENTED_RULE_IDS = [
+/** 実装済みのルール（その2で16種すべて）。 */
+export const IMPLEMENTED_RULE_IDS: readonly RuleId[] = ALL_RULE_IDS;
+
+/** 大富豪モードで選べるルール（定番8種、decisions §7。その1と同じ並び）。 */
+export const DAIFUGO_MODE_RULE_IDS: readonly RuleId[] = [
   'flush_on_8',
   'revolution',
   'temp_reverse_on_j',
@@ -42,10 +45,10 @@ export const IMPLEMENTED_RULE_IDS = [
   'runs',
   'forbidden_finish',
   'dethrone',
-] as const satisfies readonly RuleId[];
+];
 
-/** 大富豪モードで選べるルール（定番8種、decisions §7）。 */
-export const DAIFUGO_MODE_RULE_IDS: readonly RuleId[] = IMPLEMENTED_RULE_IDS;
+/** カスタムモードで選べるルール（第1段階の16種、decisions §7）。 */
+export const CUSTOM_MODE_RULE_IDS: readonly RuleId[] = ALL_RULE_IDS;
 
 /** 大富豪モードの最初の状態（おすすめ設定、decisions §7）。 */
 export const DAIFUGO_MODE_DEFAULT_RULES: readonly RuleId[] = [
@@ -112,13 +115,16 @@ export type ViolationKind =
   | 'fieldSize' // 場の枚数が違う
   | 'notStronger' // 場より強くない
   | 'suitLock' // マーク縛り
+  | 'sequenceLock' // 激縛り
+  | 'openingCard' // ダイヤの3スタートの義務
   | 'passed'; // パス済み
 
 export type Violation = { kind: ViolationKind };
 
 // ---------- 待ち ----------
 
-export type AwaitKind = 'turn' | 'respond' | 'exchangeGive';
+/** choice = 7渡し・10捨ての「手札から選ぶ」待ち。 */
+export type AwaitKind = 'turn' | 'respond' | 'exchangeGive' | 'choice';
 export type AwaitTimer = 'turn' | 'respond' | 'choice' | 'exchange' | 'ability';
 
 export type Awaiting = {
@@ -130,13 +136,26 @@ export type Awaiting = {
 
 // ---------- 効果と中断 ----------
 
-/** 1手で起きる効果。決まった順に1つずつ処理する（design §3.7、§8.1）。 */
+/** 1手で起きる効果。決まった順に1つずつ処理する（design §3.7、§8.1、design-2 §2.2）。 */
 export type Effect =
   | { type: 'toggleRevolution' }
   | { type: 'setTempReverse'; active: boolean }
   | { type: 'setSuitLock'; suits: Suit[] }
   | { type: 'clearSuitLock' }
+  /** 激縛りの成立と、連番の更新（rank はいま場のいちばん上の手の数字）。 */
+  | { type: 'setSeqLock'; suits: Suit[]; rank: Rank }
+  | { type: 'clearSeqLock' }
+  /** 9リバース。 */
+  | { type: 'setOrderReverse'; active: boolean }
+  /** ダイヤの3の義務を外す。 */
+  | { type: 'clearOpening' }
+  /** 7渡し・10捨て（選択の待ちを作る）。 */
+  | { type: 'handChoice'; rule: RuleId; max: number }
+  /** 上がりの判定（中心の処理が入れる印）。foul は出す直前に判定した反則上がりか。 */
+  | { type: 'finishCheck'; foul: boolean }
   | { type: 'returnRound'; rule: RuleId }
+  /** K スキップ（飛ばす人数）。 */
+  | { type: 'skip'; count: number }
   | { type: 'flush'; leader: SeatId; reason: FlushReason }
   | { type: 'forceLast'; seat: SeatId; reason: 'dethrone' };
 
@@ -155,7 +174,22 @@ export type ReturnRoundPending = {
   rest: Effect[];
 };
 
-export type Pending = ReturnRoundPending;
+/** 7渡し・10捨ての選択の途中（再開に必要な情報）。 */
+export type ChoicePending = {
+  type: 'choice';
+  /** give_on_7 か discard_on_10。 */
+  rule: RuleId;
+  /** 選ぶ人（手を出した人）。 */
+  seat: SeatId;
+  /** 選べる上限（出した枚数）。 */
+  max: number;
+  /** 7渡しの相手。10捨ては null。 */
+  to: SeatId | null;
+  /** 選択のあとに残っている効果。 */
+  rest: Effect[];
+};
+
+export type Pending = ReturnRoundPending | ChoicePending;
 
 // ---------- 交換 ----------
 
@@ -189,8 +223,10 @@ export type GameState = {
   field: FieldPlay[];
   /** いまの場で最後に出した人（場が空なら null）。 */
   lastPlayer: SeatId | null;
-  /** 手番の向き（1 = 席番号の増える向き）。その1では常に 1。 */
+  /** 手番の向き（1 = 席番号の増える向き）。orderReversed から決まる値（orderReversed ? -1 : 1）。 */
   direction: 1 | -1;
+  /** 9リバース中か。 */
+  orderReversed: boolean;
   passed: boolean[];
   /** 上から確定した順位の列（先頭が1位）。 */
   topOrder: SeatId[];
@@ -201,6 +237,10 @@ export type GameState = {
   tempReverse: boolean;
   /** マーク縛り（組はマークの並び、階段は1つのマーク）。 */
   suitLock: Suit[] | null;
+  /** 激縛り。rank は「いま場のいちばん上の手の数字」。 */
+  seqLock: { suits: Suit[]; rank: Rank } | null;
+  /** 最初の1手に含める義務のあるカード（ダイヤの3）。なければ null。 */
+  openingCard: CardId | null;
   pending: Pending | null;
   awaiting: Awaiting[];
   /** 1位が確定した瞬間の席ごとの手札枚数（特権枠の判定用。その1では記録だけ）。 */
@@ -219,7 +259,7 @@ export type GameResult = {
 export type MatchPhase = 'exchange' | 'play' | 'gameResult' | 'matchResult';
 
 export type MatchState = {
-  version: 1;
+  version: 2;
   matchId: string;
   config: MatchConfig;
   rng: RngState;
@@ -256,6 +296,8 @@ export type Action =
       cards: CardId[] | null;
     }
   | { type: 'exchangeGive'; seat: SeatId; awaitId: number; cards: CardId[] }
+  /** 7渡し・10捨てで選ぶ。空の配列 = 渡さない・捨てない。 */
+  | { type: 'choose'; seat: SeatId; awaitId: number; cards: CardId[] }
   | { type: 'auto'; awaitId: number; policy: 'timeout' | 'cpu' }
   | { type: 'nextGame' }
   | { type: 'endMatch' };
@@ -274,6 +316,7 @@ export type ActionErrorCode =
   | 'cannotPass'
   | 'invalidResponse'
   | 'invalidExchange'
+  | 'invalidChoice'
   | 'notUnlimited';
 
 export type ActionError = {
@@ -317,8 +360,11 @@ export type LegalPlay = {
 
 type EventBase = { seq: number; gameNo: number };
 
+/** 最初の親の決め方。diamond3 = ダイヤの3を持つ人（親は交換のあとに確定し、GameView.starter で伝える）。 */
+export type LeaderRule = 'random' | 'prevLowest' | 'diamond3';
+
 export type GameEventBody =
-  | { type: 'gameStart'; leaderRule: 'random' | 'prevLowest' }
+  | { type: 'gameStart'; leaderRule: LeaderRule }
   | { type: 'deal'; counts: number[]; hands: CardId[][] }
   | { type: 'exchangeStart'; pairs: { lower: SeatId; upper: SeatId; count: number }[] }
   | { type: 'exchange'; from: SeatId; to: SeatId; cards: CardId[] }
@@ -329,21 +375,35 @@ export type GameEventBody =
   | { type: 'tempReverse'; active: boolean }
   | { type: 'suitLock'; suits: Suit[] }
   | { type: 'returnRoundStart'; rule: RuleId; source: SeatId; participants: SeatId[] }
-  | { type: 'respond'; seat: SeatId; play: Play }
+  /** toDiscard: 返したカードを場ではなく捨て札に置いた（4止め）。スペ3返しには付けない。 */
+  | { type: 'respond'; seat: SeatId; play: Play; toDiscard?: true }
   | { type: 'respondSkip'; seat: SeatId }
   | { type: 'returnRoundEnd'; rule: RuleId; returnedBy: SeatId | null }
   | { type: 'fieldCleared'; reason: FlushReason; leader: SeatId }
   | { type: 'placed'; seat: SeatId; place: Place; reason: PlaceReason }
   | { type: 'dethrone'; seat: SeatId; discarded: CardId[] }
+  /** 激縛りの成立（連番の更新では出さない）。 */
+  | { type: 'seqLock'; suits: Suit[] }
+  | { type: 'orderReverse'; active: boolean }
+  | { type: 'choiceStart'; rule: RuleId; seat: SeatId; max: number; to: SeatId | null }
+  /** 7渡し。中身は当事者だけ（eventsFor で落とす）。 */
+  | { type: 'give'; from: SeatId; to: SeatId; cards: CardId[] }
+  /** 10捨て。全員に見える。 */
+  | { type: 'discard'; seat: SeatId; rule: RuleId; cards: CardId[] }
+  /** 渡さない・捨てない。 */
+  | { type: 'choiceSkip'; seat: SeatId; rule: RuleId }
+  /** K スキップで飛ばされた席。 */
+  | { type: 'skipped'; by: SeatId; seats: SeatId[] }
   | { type: 'gameEnd'; places: Place[]; deltas: number[]; scores: number[] }
   | { type: 'matchEnd'; standings: Standing[] };
 
 export type GameEvent = EventBase & GameEventBody;
 
 export type VisibleEventBody =
-  | Exclude<GameEventBody, { type: 'deal' } | { type: 'exchange' }>
+  | Exclude<GameEventBody, { type: 'deal' } | { type: 'exchange' } | { type: 'give' }>
   | { type: 'deal'; counts: number[]; hand: CardId[] }
-  | { type: 'exchange'; from: SeatId; to: SeatId; count: number; cards: CardId[] | null };
+  | { type: 'exchange'; from: SeatId; to: SeatId; count: number; cards: CardId[] | null }
+  | { type: 'give'; from: SeatId; to: SeatId; count: number; cards: CardId[] | null };
 
 export type VisibleEvent = EventBase & VisibleEventBody;
 
@@ -362,7 +422,8 @@ export type MyAwaiting =
       forced: CardId[];
       candidates: CardId[];
       choose: number;
-    };
+    }
+  | { awaitId: number; kind: 'choice'; rule: RuleId; max: number; to: SeatId | null };
 
 export type PublicExchangePair = {
   lower: SeatId;
@@ -378,6 +439,7 @@ export type GameView = {
   field: FieldPlay[];
   lastPlayer: SeatId | null;
   direction: 1 | -1;
+  orderReversed: boolean;
   passed: boolean[];
   places: (Place | null)[];
   placeReasons: (PlaceReason | null)[];
@@ -385,6 +447,10 @@ export type GameView = {
   tempReverse: boolean;
   reversed: boolean;
   suitLock: Suit[] | null;
+  seqLock: { suits: Suit[]; rank: Rank } | null;
+  openingCard: CardId | null;
+  /** 7渡し・10捨ての選択中。 */
+  choice: { rule: RuleId; seat: SeatId; to: SeatId | null } | null;
   returnRound: { rule: RuleId; source: SeatId; asking: SeatId | null } | null;
   exchange: PublicExchangePair[] | null;
   /** 自分が渡した・受け取ったカード（交換）。 */

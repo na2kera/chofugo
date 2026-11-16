@@ -1,8 +1,10 @@
-// 見える情報のテスト（design §3.8、§3.9）。
-// ある席の手札と公開情報を固定し、ほかの席の非公開の手札だけを入れ替えても、
-// その席の viewFor / legalPlays / eventsFor が変わらないことを確かめる。
+// 見える情報のテスト（design §3.8、§3.9、design-2 §2.9）。
+// 「その席が知っているカード」（自分の手札、公開されたカード、自分が渡した・受け取ったカード、ダイヤの3の義務のカード）を定義し、
+// それ以外のカードだけをほかの席の間で入れ替えても、その席の viewFor / legalPlays / eventsFor が変わらないことを確かめる。
+// その2で、7渡しがあるため「知っているカード」を使う形に直した（その1は「ほかの席の手札から1枚ずつ」）。
 import { describe, expect, it } from 'vitest';
 import {
+  ALL_RULE_IDS,
   applyAction,
   awaiting,
   createMatch,
@@ -11,6 +13,7 @@ import {
   legalPlays,
   viewFor,
   type Action,
+  type GameEvent,
   type MatchState,
   type RuleId,
   type SeatId,
@@ -22,10 +25,23 @@ import { cfg, cs, randomAction, scene } from './test/helpers.ts';
 
 const SEATS: SeatId[] = [0, 1, 2, 3];
 
-/** viewer 以外の2席の手札から1枚ずつ入れ替える（枚数は変わらない）。 */
-function swapHidden(s: MatchState, viewer: SeatId, rng: RngState): MatchState | null {
+/** 出来事から、その席が知ったカードを足す（eventsFor で見えるものだけを使う）。 */
+function learn(known: Set<string>, events: readonly GameEvent[], viewer: SeatId): void {
+  for (const e of eventsFor(events, viewer)) {
+    if (e.type === 'deal') e.hand.forEach((x) => known.add(x));
+    if ((e.type === 'exchange' || e.type === 'give') && e.cards !== null) e.cards.forEach((x) => known.add(x));
+    if (e.type === 'play' || e.type === 'respond') e.play.cards.forEach((x) => known.add(x));
+    if (e.type === 'discard') e.cards.forEach((x) => known.add(x));
+    if (e.type === 'dethrone') e.discarded.forEach((x) => known.add(x));
+  }
+}
+
+/** viewer 以外の2席の手札から、viewer の知らないカードを1枚ずつ入れ替える（枚数は変わらない）。 */
+function swapHidden(s: MatchState, viewer: SeatId, rng: RngState, known: ReadonlySet<string>): MatchState | null {
   const g = s.game!;
-  const others = SEATS.filter((x) => x !== viewer && g.hands[x]!.length > 0);
+  // ダイヤの3の義務が残っている間は、持っている席（親）が全員に分かる
+  const unknown = (x: SeatId) => g.hands[x]!.filter((id) => !known.has(id) && id !== g.openingCard);
+  const others = SEATS.filter((x) => x !== viewer && unknown(x).length > 0);
   if (others.length < 2) return null;
   const a = others[nextInt(rng, others.length)]!;
   const rest = others.filter((x) => x !== a);
@@ -33,8 +49,10 @@ function swapHidden(s: MatchState, viewer: SeatId, rng: RngState): MatchState | 
   const t = deepClone(s);
   const ha = t.game!.hands[a]!;
   const hb = t.game!.hands[b]!;
-  const i = nextInt(rng, ha.length);
-  const j = nextInt(rng, hb.length);
+  const ua = unknown(a);
+  const ub = unknown(b);
+  const i = ha.indexOf(ua[nextInt(rng, ua.length)]!);
+  const j = hb.indexOf(ub[nextInt(rng, ub.length)]!);
   const ca = ha[i]!;
   ha[i] = hb[j]!;
   hb[j] = ca;
@@ -60,6 +78,7 @@ function viewerAction(s: MatchState, viewer: SeatId, rng: RngState): Action | nu
   const w = ws[0];
   if (w === undefined) return null;
   if (w.kind === 'respond') return { type: 'respond', seat: w.seat, awaitId: w.id, cards: null };
+  if (w.kind === 'choice') return { type: 'choose', seat: w.seat, awaitId: w.id, cards: [] };
   if (w.kind === 'turn' && s.game!.lastPlayer !== null) return { type: 'pass', seat: w.seat, awaitId: w.id };
   return null;
 }
@@ -69,11 +88,18 @@ describe('見える情報', () => {
     const rng = rngFromSeed([3, 1, 4, 1]);
     let checked = 0;
     let respondChecked = 0;
-    for (let m = 0; m < 30; m++) {
-      const rules = IMPLEMENTED_RULE_IDS.filter((_, i) => (m + i) % 3 !== 0) as RuleId[];
+    let choiceChecked = 0;
+    let giveSeen = 0;
+    for (let m = 0; m < 40; m++) {
+      // 16種から選ぶ（4の倍数の回は16種すべて）。前提を満たさない4止めは外す
+      let rules = (m % 4 === 0 ? [...ALL_RULE_IDS] : ALL_RULE_IDS.filter((_, i) => (m + i) % 3 !== 0)) as RuleId[];
+      if (!rules.includes('flush_on_8')) rules = rules.filter((r) => r !== 'block_flush_with_4');
       const created = createMatch(cfg(rules, 5), [m + 11, 5, 8, 13]);
-      if (!created.ok) throw new Error();
+      if (!created.ok) throw new Error(created.error.message);
       let s = created.state;
+      const known = SEATS.map(() => new Set<string>());
+      const learnAll = (events: readonly GameEvent[]) => SEATS.forEach((v) => learn(known[v]!, events, v));
+      learnAll(created.events);
       let steps = 0;
       while (s.phase !== 'matchResult' && steps < 5000) {
         steps++;
@@ -81,17 +107,20 @@ describe('見える情報', () => {
           const r = applyAction(s, { type: 'nextGame' });
           if (!r.ok) throw new Error();
           s = r.state;
+          known.forEach((k) => k.clear());
+          learnAll(r.events);
           continue;
         }
         // 交換フェーズは対象外（下位に選択待ちが出るかどうかが、待ちとして公開される。engine-assumptions.md）
         if (s.phase === 'play' && nextInt(rng, 4) === 0) {
           const viewer = SEATS[nextInt(rng, 4)]!;
-          const t = swapHidden(s, viewer, rng);
+          const t = swapHidden(s, viewer, rng, known[viewer]!);
           if (t !== null) {
             sameForViewer(s, t, viewer);
             const a = viewerAction(s, viewer, rng);
             if (a !== null) {
               if (a.type === 'respond' || awaiting(s)[0]?.kind === 'respond') respondChecked++;
+              if (a.type === 'choose') choiceChecked++;
               const ra = applyAction(s, a);
               const rb = applyAction(t, a);
               expect(rb.ok).toBe(ra.ok);
@@ -109,10 +138,14 @@ describe('見える情報', () => {
         const r = applyAction(s, randomAction(s, rng));
         if (!r.ok) throw new Error(r.error.message);
         s = r.state;
+        learnAll(r.events);
+        if (r.events.some((e) => e.type === 'give')) giveSeen++;
       }
     }
     expect(checked).toBeGreaterThan(300);
     expect(respondChecked).toBeGreaterThan(0);
+    expect(choiceChecked).toBeGreaterThan(0);
+    expect(giveSeen).toBeGreaterThan(0);
   }, 60_000);
 
   it('返しの一周: スペードの3がどの席にあっても、ほかの席から見た待ちと view は同じ', () => {

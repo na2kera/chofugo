@@ -57,6 +57,8 @@ export type Setup = {
   tempReverse?: boolean;
   discard?: string;
   gameCount?: 5 | 10 | null;
+  orderReversed?: boolean;
+  openingCard?: CardId;
 };
 
 /** 場面を直接作る（手番 turn の人が親で、場は空）。 */
@@ -67,7 +69,8 @@ export function scene(s: Setup): MatchState {
     discard: cs(s.discard ?? ''),
     field: [],
     lastPlayer: null,
-    direction: 1,
+    direction: s.orderReversed === true ? -1 : 1,
+    orderReversed: s.orderReversed ?? false,
     passed: [false, false, false, false],
     topOrder: [],
     bottomOrder: [],
@@ -75,6 +78,8 @@ export function scene(s: Setup): MatchState {
     revolution: s.revolution ?? false,
     tempReverse: s.tempReverse ?? false,
     suitLock: null,
+    seqLock: null,
+    openingCard: s.openingCard ?? null,
     pending: null,
     awaiting: [{ id: 100, seat: s.turn, kind: 'turn', timer: 'turn' }],
     firstPlaceHandCounts: null,
@@ -221,6 +226,14 @@ export function randomAction(s: MatchState, rng: RngState): Action {
     return pick(rng, opts);
   }
   const hand = viewFor(s, w.seat).game?.hand ?? [];
+  if (m.kind === 'choice') {
+    // 0〜max 枚をでたらめに選ぶ
+    const h = hand.slice();
+    const n = nextInt(rng, Math.min(m.max, h.length) + 1);
+    const chosen: CardId[] = [];
+    for (let i = 0; i < n; i++) chosen.push(...h.splice(nextInt(rng, h.length), 1));
+    return { type: 'choose', seat: w.seat, awaitId: w.id, cards: chosen };
+  }
   let cards: CardId[];
   if (m.role === 'lower') {
     const cand = m.candidates.slice();

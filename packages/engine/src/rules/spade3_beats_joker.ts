@@ -1,14 +1,14 @@
 // スペ3返し（decisions §6.5、§6.2 の返しの一周、§14.3、§14.7）。
 
 import type { RuleModule } from './types.ts';
-import { isJokerSingle } from '../hand.ts';
+import { isUnbeatableJokers } from '../hand.ts';
 
 const SPADE3 = 'spade-3';
 
 export const spade3BeatsJoker: RuleModule = {
   id: 'spade3_beats_joker',
   afterPlay(ctx, played) {
-    if (played.via !== 'turn' || !isJokerSingle(played.play)) return [];
+    if (played.via !== 'turn' || !(isUnbeatableJokers(played.play) && played.play.cards.length === 1)) return [];
     // 省く条件: スペードの3がすでに全員に見えている（捨て札・場）
     if (ctx.isPublic(SPADE3)) return [];
     return [{ type: 'returnRound', rule: 'spade3_beats_joker' }];
