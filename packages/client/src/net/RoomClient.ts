@@ -105,8 +105,14 @@ export class RoomClient {
   private openedThisSocket = false;
   private helloSentThisSocket = false;
   private reqId = 0;
-  /** 返事を待っている操作（action）の reqId。設定・開始などのホストの操作と見分ける（design-2 §6.3）。 */
-  private actionReqId: number | null = null;
+  /**
+   * 送って、まだ結果（受理・拒否）の分からない操作（action）の reqId（design-2 §6.3、client-assumptions H11）。
+   * 設定・開始などのホストの操作は入れない。送信待ちが3秒で解けて同じ操作を送り直した場合も、前の操作の受理を見分けられるよう複数持つ。
+   * 受理・その reqId の拒否・接続の終了・試合の識別子の変化で片付ける。
+   */
+  private actionReqIds = new Set<number>();
+  /** actionReqIds を送った試合の識別子。 */
+  private actionMatchId: string | null = null;
   private skew = new ClockSkew();
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private silenceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -274,6 +280,8 @@ export class RoomClient {
   private onClosed(code: number): void {
     this.clearTimers();
     this.ws = null;
+    // 接続が終わったら、結果の分からない操作の覚えを片付ける（つなぎ直したあとの state には、前の接続の操作の受理は付かない）
+    this.actionReqIds.clear();
     const pending = pendingAfter(this.snap.pending, { type: 'disconnected' });
     const out = closeOutcome(code);
     if (out.kind !== 'retry') {
@@ -302,7 +310,10 @@ export class RoomClient {
     const prev = this.snap.state;
     // 自分が送った操作が受理された state（design-2 §6.3）。サーバーは受け付けた操作の reqId を、その入力で送る本人への state に付ける。
     // 送信待ちの間に届いた state でも、時間切れ・他人の操作で進んだもの（acceptedReqId なし）は受理の証拠にしない（client-assumptions H11）
-    const ownActionAccepted = msg.acceptedReqId !== undefined && this.actionReqId !== null && msg.acceptedReqId === this.actionReqId;
+    // 試合が変わったら、前の試合に送った操作の覚えは片付ける
+    if (msg.matchId !== this.actionMatchId) this.actionReqIds.clear();
+    const ownActionAccepted = msg.acceptedReqId !== undefined && this.actionReqIds.has(msg.acceptedReqId);
+    if (ownActionAccepted && msg.acceptedReqId !== undefined) this.actionReqIds.delete(msg.acceptedReqId);
     const patch: Partial<Snapshot> = {
       state: msg,
       offset: this.skew.offset,
@@ -371,6 +382,7 @@ export class RoomClient {
   }
 
   private onError(msg: ErrorMessage): void {
+    if (msg.reqId !== null) this.actionReqIds.delete(msg.reqId);
     const pending = pendingAfter(this.snap.pending, { type: 'error', reqId: msg.reqId });
     if (msg.code === 'roomFull' || msg.code === 'cannotJoin') {
       this.set({ pending, joinError: msg.code });
@@ -486,7 +498,11 @@ export class RoomClient {
     const matchId = this.snap.state?.matchId;
     if (matchId === null || matchId === undefined) return false;
     const ok = this.send({ type: 'action', matchId, action }, what);
-    if (ok) this.actionReqId = this.reqId;
+    if (ok) {
+      if (this.actionMatchId !== matchId) this.actionReqIds.clear();
+      this.actionMatchId = matchId;
+      this.actionReqIds.add(this.reqId);
+    }
     return ok;
   }
 

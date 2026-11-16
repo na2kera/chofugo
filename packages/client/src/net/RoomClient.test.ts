@@ -332,6 +332,52 @@ describe('7渡しで受け取ったカードの強調（design-2 §6.3）', () =
     expect(client.getSnapshot().gift).toBeNull();
   });
 
+  it('送信待ちが解けて同じ操作を送り直したあと、最初の操作の受理が届いたら消す（送り直した操作は staleAwait で拒否）', () => {
+    const s = joined();
+    s.receive(state({ view: view(['club-3', 'spade-9']), events: [giveToMe(5)] }));
+    // 操作 A を送る → 3秒たって送信待ちが解ける → 同じ操作を B として送り直す
+    expect(client.sendAction({ type: 'pass', awaitId: 7 }, 'pass')).toBe(true);
+    const a = s.json().at(-1)!['reqId'] as number;
+    vi.advanceTimersByTime(3500);
+    expect(client.sendAction({ type: 'pass', awaitId: 7 }, 'pass')).toBe(true);
+    const b = s.json().at(-1)!['reqId'] as number;
+    expect(b).not.toBe(a);
+    // A の受理が届く
+    s.receive(state({ view: view(['club-3', 'spade-9']), events: [ev(6, { type: 'pass', seat: 0 })], acceptedReqId: a }));
+    expect(client.getSnapshot().gift).toBeNull();
+    // B は staleAwait で拒否される（強調はもうない）
+    s.receive({ type: 'error', code: 'actionRejected', message: 'x', reqId: b, engineError: 'staleAwait' });
+    expect(client.getSnapshot().gift).toBeNull();
+  });
+
+  it('拒否された操作・接続が切れる前の操作・前の試合の操作の reqId では消さない', () => {
+    const s = joined();
+    s.receive(state({ view: view(['club-3', 'spade-9']), events: [giveToMe(5)] }));
+    // 拒否された操作
+    expect(client.sendAction({ type: 'pass', awaitId: 7 }, 'pass')).toBe(true);
+    const rejected = s.json().at(-1)!['reqId'] as number;
+    s.receive({ type: 'error', code: 'actionRejected', message: 'x', reqId: rejected, engineError: 'staleAwait' });
+    s.receive(state({ view: view(['club-3', 'spade-9']), events: [ev(6, { type: 'pass', seat: 1 })], acceptedReqId: rejected }));
+    expect(client.getSnapshot().gift?.cards).toEqual(['club-3']);
+    // 前の試合に送った操作（試合の識別子が変わったら覚えを片付ける）
+    expect(client.sendAction({ type: 'pass', awaitId: 8 }, 'pass')).toBe(true);
+    const old = s.json().at(-1)!['reqId'] as number;
+    s.receive(state({ matchId: 'm2', view: view(['club-3', 'spade-9']), events: [giveToMe(1)] }));
+    expect(client.getSnapshot().gift?.cards).toEqual(['club-3']);
+    s.receive(state({ matchId: 'm2', view: view(['club-3', 'spade-9']), events: [ev(2, { type: 'pass', seat: 1 })], acceptedReqId: old }));
+    expect(client.getSnapshot().gift?.cards).toEqual(['club-3']);
+    // 接続が切れる前に送った操作
+    expect(client.sendAction({ type: 'pass', awaitId: 9 }, 'pass')).toBe(true);
+    const before = s.json().at(-1)!['reqId'] as number;
+    s.serverClose(1006);
+    vi.advanceTimersByTime(60_000);
+    const s2 = sockets.at(-1)!;
+    expect(s2).not.toBe(s);
+    s2.open();
+    s2.receive(state({ matchId: 'm2', view: view(['club-3', 'spade-9']), events: [ev(3, { type: 'pass', seat: 1 })], acceptedReqId: before }));
+    expect(client.getSnapshot().gift?.cards).toEqual(['club-3']);
+  });
+
   it('設定などホストの操作の返事では消さない。復帰した直後は復元しない', () => {
     const s = joined();
     s.receive(state({ view: view(['club-3']), events: [giveToMe(5)] }));
