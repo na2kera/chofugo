@@ -125,28 +125,48 @@ describe('16種すべて ON（カスタムモード）', () => {
 });
 
 describe('保存の形式の番号（design-2 §3.3）', () => {
-  it('形式の番号が違う保存済みのルームには再接続できず、保存は消える', async () => {
-    const roomId = await createRoom(server.base);
-    const A = await seated(roomId, 'A');
-    expect(await testRoute(server.base, roomId, 'oldformat')).toEqual({ ok: true });
-    // 開いていた接続からのメッセージ：ルームを閉じる
+  /** 試合を始め、操作の記録とアラームが保存されるまで進める（消えたことを確かめる前に、残っていることを確かめるため）。 */
+  async function playingRoom() {
+    const roomId = await createRoom(server.base, { cpuDelayMs: 20, turnMs: 60_000, exchangeMs: 60_000 });
+    const A = await seated(roomId, 'A', { auto: true });
     A.send({ type: 'start' });
+    await A.waitState((s) => s.matchPhase === 'play', 10_000, 'started');
+    // CPU（と A）の操作が1つ以上記録され、期限のアラームがある
+    for (let i = 0; i < 100; i++) {
+      const st = await testRoute(server.base, roomId, 'storage');
+      if (st.actions > 0 && st.alarm !== null) return { roomId, A, before: st };
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    throw new Error('actions were not logged');
+  }
+  const gone = { room: false, actions: 0, keys: 0, alarm: null };
+
+  it('形式の番号が違う保存済みのルームには再接続できず、保存（ルームの値・操作の記録）とアラームは消える', async () => {
+    const { roomId, A, before } = await playingRoom();
+    expect(before).toMatchObject({ room: true });
+    expect(before.actions).toBeGreaterThan(0);
+    expect(before.alarm).toBeTypeOf('number');
+    expect(await testRoute(server.base, roomId, 'oldformat')).toEqual({ ok: true });
+    // 書き換えただけでは、まだ消えていない
+    expect((await testRoute(server.base, roomId, 'storage')).room).toBe(true);
+    // 開いていた接続からのメッセージ：ルームを閉じる
+    A.send({ type: 'nextGame' });
     expect((await A.waitClosed(5000)).code).toBe(4003);
+    expect(await testRoute(server.base, roomId, 'storage')).toEqual(gone);
     // 同じ本人確認の値でつなぎ直しても入れない（作られていないルームと同じ 404）
     const again = new Client(server.base, roomId, { name: 'A', token: A.token });
     await expect(again.connect()).rejects.toThrow();
-    // 保存は消えている
-    expect(await testRoute(server.base, roomId, 'oldformat')).toEqual({ ok: false });
+    expect(await testRoute(server.base, roomId, 'storage')).toEqual(gone);
   });
 
-  it('接続のない古い形式のルームも、新しい接続の時点で閉じる', async () => {
-    const roomId = await createRoom(server.base);
-    const A = await seated(roomId, 'A');
+  it('接続のない古い形式のルームも、新しい接続の時点で閉じ、保存とアラームは消える', async () => {
+    const { roomId, A } = await playingRoom();
     A.close();
     await A.waitClosed(5000);
     expect(await testRoute(server.base, roomId, 'oldformat')).toEqual({ ok: true });
+    expect((await testRoute(server.base, roomId, 'storage')).room).toBe(true);
     const again = new Client(server.base, roomId, { name: 'A', token: A.token });
     await expect(again.connect()).rejects.toThrow();
-    expect(await testRoute(server.base, roomId, 'oldformat')).toEqual({ ok: false });
+    expect(await testRoute(server.base, roomId, 'storage')).toEqual(gone);
   });
 });

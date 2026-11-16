@@ -1,4 +1,4 @@
-// その3（超富豪モード）：設定、4接続の通しの試合と「もう一度」、人間の特権と期限、選択の途中の保存と時間切れ、
+// その3（超富豪モード）：設定、4接続の通しの試合、「もう一度」、人間の特権と期限、選択の途中の保存と時間切れ、
 // 選択の途中の切断と代役・復帰・全員不在からの再開（design-3 §3.4、§6.1、§6.2、§6.5、§6.6、§6.8）。
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -96,7 +96,7 @@ describe('設定（design-3 §3.1）', () => {
 });
 
 describe('超富豪モードの通しの試合', () => {
-  it('4接続で最後まで進め（特権の選択と使用を含む）、「もう一度」のあとも超富豪モードで2ゲーム目に特権の選択が出る', async () => {
+  it('4接続で最後まで進める（特権の選択と使用を含む）', async () => {
     const roomId = await createRoom(server.base, { cpuDelayMs: 20 });
     const clients = [0, 1, 2, 3].map((i) => new Client(server.base, roomId, { name: `P${i}`, autoHost: true }));
     for (const c of clients) await join(c);
@@ -150,20 +150,40 @@ describe('超富豪モードの通しの試合', () => {
     expect(checkNoLeak(clients)).toEqual([]);
     expect(await deadlineProblems(server.base, roomId)).toEqual([]);
     expect(await testRoute(server.base, roomId, 'replay')).toMatchObject({ ok: true });
+    for (const c of clients) c.close();
+  });
 
-    // 同じメンバーでもう一度：超富豪モードのまま、1ゲーム目は特権なし、2ゲーム目に選択が出る
-    const oldMatch = host.state.matchId;
+  it('「もう一度」のあとも超富豪モードのままで、新しい試合の2ゲーム目に特権の選択が出る（前の試合の出来事は数えない）', async () => {
+    const roomId = await createRoom(server.base, { cpuDelayMs: 20 });
+    const clients = [0, 1, 2, 3].map((i) => new Client(server.base, roomId, { name: `P${i}` }));
+    for (const c of clients) await join(c);
+    const [host] = clients;
+    // 無制限の試合を1ゲームで終えてから「もう一度」（5ゲームを待たずに短く確かめる）
+    await setChofugo(host, null);
+    for (const c of clients) c.auto = true;
+    host.send({ type: 'start' });
+    const oldMatch = (await host.waitState((s) => s.matchPhase === 'gameResult', 60_000, 'first gameResult')).matchId;
+    host.send({ type: 'endMatch' });
+    await host.waitState((s) => s.matchPhase === 'matchResult', 10_000, 'matchResult');
+    host.autoHost = true;
     host.send({ type: 'rematch' });
-    await host.waitState((s) => s.matchId !== oldMatch && s.matchPhase !== null);
-    expect(host.state.room.config).toEqual({ mode: 'chofugo', rules: ALL16, gameCount: 5 });
-    const newMatch = host.state.matchId;
-    await host.waitFor(
-      () => (eventsOf(host).some((e) => e.type === 'abilitySelectStart' && e.gameNo === 2 && host.state.matchId === newMatch) ? true : undefined),
-      120_000,
-      'ability select in game 2 after rematch',
-    );
-    const after = host.states.filter((s) => s.matchId === newMatch).flatMap((s) => s.events);
+    const first = await host.waitState((s) => s.matchId !== oldMatch && s.matchPhase !== null, 10_000, 'rematch');
+    const newMatch = first.matchId;
+    expect(first.room.config).toEqual({ mode: 'chofugo', rules: ALL16, gameCount: null });
+    // 新しい試合の state の出来事だけを見る（eventsOf は前の試合の分も含むため）
+    const eventsOfMatch = (c) => c.states.filter((s) => s.matchId === newMatch).flatMap((s) => s.events);
+    const sel = await host.waitFor(() => eventsOfMatch(host).find((e) => e.type === 'abilitySelectStart' && e.gameNo === 2), 90_000, 'ability select in game 2 after rematch');
+    expect(sel.gameNo).toBe(2);
+    const after = eventsOfMatch(host);
     expect(after.some((e) => e.type === 'abilitySelectStart' && e.gameNo === 1)).toBe(false);
+    // 新しい試合でも全員が操作している（待ちの番号が前の試合とかぶっても、acted のキーに試合の識別子があるので送る）
+    for (const c of clients) {
+      const mineActed = [...c.acted].filter((k) => k.startsWith(`${newMatch}:`));
+      expect(mineActed.length).toBeGreaterThan(0);
+      expect(c.rejectedOwn).toEqual([]);
+    }
+    // 特権の選択が確定し、新しい試合の2ゲーム目が進む
+    await host.waitFor(() => eventsOfMatch(host).find((e) => e.type === 'abilitiesChosen' && e.gameNo === 2), 30_000, 'chosen in game 2');
     expect(await deadlineProblems(server.base, roomId)).toEqual([]);
     for (const c of clients) c.close();
   });

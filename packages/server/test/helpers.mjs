@@ -88,11 +88,15 @@ function killGroup(child) {
 /** このテストのファイルで作ったルーム（最後に期限の検査の記録を確かめるため）。 */
 export const createdRooms = [];
 
-export async function createRoom(base, timing) {
+/** ルームを作る。seed（4つの uint32）を渡すと、試合の種を固定する（テスト用の機能。scenario.mjs で場面を作るため）。 */
+export async function createRoom(base, timing, seed) {
+  const body = {};
+  if (timing !== undefined) body.timing = timing;
+  if (seed !== undefined) body.seed = seed;
   const r = await fetch(`${base}/api/rooms`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(timing === undefined ? {} : { timing }),
+    body: JSON.stringify(body),
   });
   if (r.status !== 201) throw new Error(`createRoom failed: ${r.status} ${await r.text()}`);
   const { roomId } = await r.json();
@@ -125,6 +129,7 @@ export class Client {
     this.errors = [];
     this.state = null;
     this.closed = null;
+    /** 操作を送った待ち（`試合の識別子:待ちの番号`）。待ちの番号は試合ごとに1から振り直されるので、試合の識別子も含める。 */
     this.acted = new Set();
     this.nextGameSent = new Set();
     this.waiters = [];
@@ -236,10 +241,15 @@ export class Client {
     } catch {}
   }
 
+  /** acted のキー。「もう一度」のあとの試合で番号がかぶっても操作を送る。 */
+  actKey(mine) {
+    return `${this.state?.matchId}:${mine.awaitId}`;
+  }
+
   maybeAct() {
     const mine = this.state?.view?.mine;
-    if (!mine || this.acted.has(mine.awaitId)) return;
-    this.acted.add(mine.awaitId);
+    if (!mine || this.acted.has(this.actKey(mine))) return;
+    this.acted.add(this.actKey(mine));
     const action = chooseAction(mine, this.state.view.game?.hand ?? []);
     const go = () => {
       if (this.ws.readyState !== WebSocket.OPEN) return;
@@ -262,9 +272,9 @@ export class Client {
 
 const MATCH_MESSAGES = ['action', 'nextGame', 'endMatch', 'rematch'];
 
-/** テスト用の経路を呼ぶ。 */
-export async function testRoute(base, roomId, name) {
-  const r = await fetch(`${base}/api/rooms/${roomId}/test/${name}`, { method: 'POST' });
+/** テスト用の経路を呼ぶ。body を渡すと JSON で送る（test/timing）。 */
+export async function testRoute(base, roomId, name, body) {
+  const r = await fetch(`${base}/api/rooms/${roomId}/test/${name}`, { method: 'POST', ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   if (r.status !== 200) throw new Error(`test/${name}: ${r.status}`);
   return r.json();
 }
@@ -465,8 +475,8 @@ export class PassiveClient extends Client {
 
   maybeAct() {
     const mine = this.state?.view?.mine;
-    if (!mine || this.acted.has(mine.awaitId)) return;
-    this.acted.add(mine.awaitId);
+    if (!mine || this.acted.has(this.actKey(mine))) return;
+    this.acted.add(this.actKey(mine));
     this.send({ type: 'action', action: passiveAction(mine, this.state.view.game?.hand ?? []) });
   }
 }
@@ -507,13 +517,13 @@ export class HolderClient extends Client {
   maybeAct() {
     if (this.manual) return;
     const mine = this.state?.view?.mine;
-    if (!mine || this.acted.has(mine.awaitId)) return;
+    if (!mine || this.acted.has(this.actKey(mine))) return;
     if (mine.kind === 'abilitySelect' || (this.stopOnAbility && mine.kind === 'turn' && mine.abilities.some((u) => u.usable))) {
       this.manual = true;
       this.notify();
       return;
     }
-    this.acted.add(mine.awaitId);
+    this.acted.add(this.actKey(mine));
     let action;
     if (mine.kind === 'turn') {
       const ok = mine.plays.filter((p) => !p.foul);

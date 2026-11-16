@@ -16,12 +16,15 @@ const post = (path, body, headers = {}) => fetch(`${server.base}${path}`, { meth
 const wsGet = (path, headers = {}) => fetch(`${server.base}${path}`, { headers });
 
 describe('本番と同じ設定', () => {
-  it('秒数の差し替えとテスト用の経路は使えない', async () => {
+  it('秒数の差し替え・種の固定とテスト用の経路は使えない', async () => {
     expect((await post('/api/rooms', JSON.stringify({ timing: { turnMs: 100 } }))).status).toBe(400);
+    // 試合の種の固定も使えない
+    expect((await post('/api/rooms', JSON.stringify({ seed: [1, 2, 3, 4] }))).status).toBe(400);
     const roomId = await createRoom(server.base);
-    for (const name of ['alarm', 'replay', 'instance', 'check', 'oldformat']) {
+    for (const name of ['alarm', 'replay', 'instance', 'check', 'oldformat', 'storage', 'timing']) {
       expect((await post(`/api/rooms/${roomId}/test/${name}`)).status).toBe(404);
     }
+    expect((await post(`/api/rooms/${roomId}/test/timing`, JSON.stringify({ testAlarmLagMs: 1000 }))).status).toBe(404);
   });
 
   // scheme だけ違う Origin は、wrangler dev のプロキシが自分のホストの Origin の scheme を書き換えて届けるため、
