@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { createMatch } from '@chofugo/engine';
 import { DEFAULT_TIMING } from '../src/timing.ts';
 import { ALL_RULE_IDS } from '@chofugo/engine';
-import { buildMatchConfig, deadlineProblems, initialRoom, isCurrentFormat, modeHasAbilities, normalizeRules, keepSeatDeadlinesOnRejoin, pause, resetSeatDeadlines, resetSeatDeadlinesOnAwayReturn, resume, STATE_FORMAT, syncDeadlines } from '../src/state.ts';
+import { buildMatchConfig, deadlineProblems, initialRoom, isCurrentFormat, modeHasAbilities, normalizeRules, keepSeatDeadlinesOnRejoin, pause, rejoinKind, resetSeatDeadlines, resetSeatDeadlinesOnAwayReturn, resume, settleDeadlines, switchSeatDeadlinesToBot, STATE_FORMAT, syncDeadlines } from '../src/state.ts';
 
 describe('normalizeRules', () => {
   it('モードで選べないルール・前提のないルールを除き、ALL_RULE_IDS の順に並べる', () => {
@@ -275,5 +275,228 @@ describe('つなぎ直したときの期限（decisions §18.1）', () => {
     s.match.game.awaiting = [{ id: 101, seat: 0, kind: 'turn', timer: 'turn', continues: 100 }];
     syncDeadlines(s, 3000);
     expect(s.deadlines[0]).toMatchObject({ awaitId: 101, at: 2000 + T, extended: true });
+  });
+});
+
+describe('代役への切り替えと、CPU の特権のあとの印（decisions §18.2）', () => {
+  const setup = () => {
+    const s = initialRoom('r', 0, { ...DEFAULT_TIMING });
+    s.pausedAt = null;
+    s.seats[0] = { ...s.seats[0], kind: 'human', name: 'A', connected: true };
+    const r = createMatch({ matchId: 'm', rules: [...ALL_RULE_IDS], gameCount: 5, abilities: true }, [1, 2, 3, 4]);
+    if (!r.ok) throw new Error('createMatch');
+    s.match = r.state;
+    s.match.game.awaiting = [{ id: 1, seat: 0, kind: 'turn', timer: 'turn' }];
+    syncDeadlines(s, 0);
+    return s;
+  };
+  const C = DEFAULT_TIMING.cpuDelayMs;
+
+  it('代役に切り替わるときは、残り時間を増やさない（一時停止中も）', () => {
+    const s = setup();
+    switchSeatDeadlinesToBot(s, 0, DEFAULT_TIMING.turnMs - 400);
+    expect(s.deadlines[0].at).toBe(DEFAULT_TIMING.turnMs);
+    const t = setup();
+    switchSeatDeadlinesToBot(t, 0, 5000);
+    expect(t.deadlines[0].at).toBe(5000 + C);
+    pause(t, 5000 + C - 500);
+    switchSeatDeadlinesToBot(t, 0, 20_000);
+    expect(t.deadlines[0]).toMatchObject({ at: null, remaining: 500 });
+  });
+
+  it('再現：人間1人のルームで、延長済みの待ちに全員不在をはさんでも、代役への切り替えで残りが1秒に戻らない', () => {
+    const s = setup();
+    const G = DEFAULT_TIMING.disconnectGraceMs;
+    const A = s.seats[0];
+    const left = (now) => (s.deadlines[0].at !== null ? s.deadlines[0].at - now : s.deadlines[0].remaining);
+    let now = 1000;
+    // 代役から戻って延長を使う
+    A.connected = false;
+    A.disconnectedAt = now;
+    settleDeadlines(s, now, new Map()); // 全員不在 → 一時停止
+    now += G + 1000;
+    const how = rejoinKind(s, A, now);
+    expect(how).toBe('away');
+    A.connected = true;
+    A.disconnectedAt = null;
+    settleDeadlines(s, now, new Map([[0, how]]));
+    A.away = false;
+    expect(s.deadlines[0].extended).toBe(true);
+    const lefts = [];
+    for (let i = 0; i < 8; i++) {
+      // 残りが短くなったところで切断 → 全員不在で一時停止 → 11秒後に接続（点検で代役に切り替わる）→ hello で復帰
+      now += Math.max(0, left(now) - 500);
+      A.connected = false;
+      A.disconnectedAt = now;
+      settleDeadlines(s, now, new Map());
+      expect(s.pausedAt).not.toBe(null);
+      now += G + 1000;
+      settleDeadlines(s, now, new Map()); // 席のない接続が来たときの点検
+      expect(A.away).toBe(true);
+      A.connected = true;
+      A.away = false;
+      A.disconnectedAt = null;
+      settleDeadlines(s, now, new Map([[0, 'away']]));
+      lefts.push(left(now));
+    }
+    for (const x of lefts) expect(x).toBeLessThanOrEqual(500);
+  });
+
+  it('再現：延長済みの席が代役になり、CPU が特権を使って手番を作り直しても、印は消えない', () => {
+    const s = setup();
+    s.deadlines[0].extended = true;
+    s.seats[0].away = true;
+    s.seats[0].connected = false;
+    // アラームの処理：期限切れの待ちを消してから auto（CPU が特権を使い、id=2 continues=1）、消した期限を carry に渡す
+    const due = s.deadlines[0];
+    s.deadlines = [];
+    s.match.game.awaiting = [{ id: 2, seat: 0, kind: 'turn', timer: 'turn', continues: 1 }];
+    syncDeadlines(s, 5000, [due]);
+    expect(s.deadlines[0]).toMatchObject({ awaitId: 2, at: 5000 + C, extended: true });
+    // 本人が戻っても秒数いっぱいにしない
+    s.seats[0].away = false;
+    s.seats[0].connected = true;
+    resetSeatDeadlinesOnAwayReturn(s, 0, 5500);
+    expect(s.deadlines[0].at).toBe(5000 + C);
+    // 一覧に元が残っている場合も、CPU・代役の席で引き継ぐ
+    const t = setup();
+    t.deadlines[0].extended = true;
+    t.seats[0].away = true;
+    t.match.game.awaiting = [{ id: 2, seat: 0, kind: 'turn', timer: 'turn', continues: 1 }];
+    syncDeadlines(t, 100);
+    expect(t.deadlines[0]).toMatchObject({ awaitId: 2, extended: true });
+  });
+
+  it('性質：1つの待ち（continues でつながる手番を含む）の残り時間が、どんな順の復帰・切断・代役・一時停止でも増えるのは最大1回', async () => {
+    const G = DEFAULT_TIMING.disconnectGraceMs;
+    const mulberry = (a) => () => {
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    const stats = { scenarios: 0, extended: 0, awayReturns: 0, keepReturns: 0, pauses: 0, botContinues: 0, humanContinues: 0, expired: 0, backAfterBotContinue: 0 };
+    for (let seed = 1; seed <= 800; seed++) {
+      const rnd = mulberry(seed);
+      const pick = (n) => Math.floor(rnd() * n);
+      const s = setup();
+      // 席1も人間（つながったり切れたりする）。いないシナリオ（人間1人）も混ぜる
+      const two = rnd() < 0.5;
+      if (two) s.seats[1] = { ...s.seats[1], kind: 'human', name: 'B', connected: true };
+      let now = 0;
+      let nextId = 2;
+      let abilities = 0;
+      let increases = 0;
+      let done = false;
+      const trace = [];
+      const dl = () => s.deadlines.find((d) => d.seat === 0);
+      const left = () => {
+        const d = dl();
+        return d === undefined ? null : d.at !== null ? d.at - now : d.remaining;
+      };
+      /** op を実行し、同じ時刻で残りが増えたかを数える（count: false は数えない操作）。 */
+      const run = (name, fn, count = true) => {
+        const before = left();
+        fn();
+        const after = left();
+        trace.push(`${now} ${name} ${before}→${after}`);
+        if (count && before !== null && after !== null && after > before) increases++;
+      };
+      const settle = (rejoined = new Map()) => {
+        const wasPaused = s.pausedAt !== null;
+        settleDeadlines(s, now, rejoined);
+        if (!wasPaused && s.pausedAt !== null) stats.pauses++;
+      };
+      const backA = () => {
+        const A = s.seats[0];
+        const how = rejoinKind(s, A, now);
+        if (how === 'away') stats.awayReturns++;
+        else stats.keepReturns++;
+        run(`A back(${how})`, () => { A.connected = true; A.away = false; A.disconnectedAt = null; settle(new Map([[0, how]])); });
+      };
+      const expire = () => {
+        const due = dl();
+        s.deadlines = s.deadlines.filter((d) => d !== due);
+        stats.expired++;
+        // 代役（CPU）が特権を使って同じ手番を作り直す（1ゲームに最大3回）。期限が約1秒になるのは延長に数えない
+        if (s.seats[0].away && abilities < 3 && rnd() < 0.8) {
+          abilities++;
+          stats.botContinues++;
+          s.match.game.awaiting = [{ id: nextId, seat: 0, kind: 'turn', timer: 'turn', continues: due.awaitId }];
+          nextId++;
+          syncDeadlines(s, now, [due]);
+          settle();
+          // 作り直した直後（約1秒の期限の中）に本人が戻る順を多めに作る
+          if (rnd() < 0.5) {
+            stats.backAfterBotContinue++;
+            backA();
+          }
+          return;
+        }
+        done = true;
+      };
+      const advance = (dt) => {
+        const end = now + dt;
+        for (let g = 0; g < 100 && !done; g++) {
+          let next = null;
+          if (s.pausedAt === null) {
+            const d = dl();
+            if (d?.at !== undefined && d.at !== null) next = d.at;
+            for (const r of s.seats) {
+              if (r.kind === 'human' && !r.connected && !r.away && r.disconnectedAt !== null) {
+                const t = r.disconnectedAt + G;
+                if (next === null || t < next) next = t;
+              }
+            }
+          }
+          if (next === null || next > end) break;
+          now = Math.max(now, next);
+          run('alarm', () => settle());
+          const d = dl();
+          if (s.pausedAt === null && d !== undefined && d.at !== null && d.at <= now) run('expire', expire, false);
+        }
+        if (!done) now = Math.max(now, end);
+      };
+      for (let i = 0; i < 80 && !done; i++) {
+        const A = s.seats[0];
+        const op = pick(7);
+        if (op === 0) advance(pick(4) === 0 ? 8000 + pick(8000) : pick(2500));
+        // 短い時間だけ進める（代役の約1秒の期限の中で戻る順を作る）
+        else if (op === 6) advance(pick(700));
+        else if (op === 1 && A.connected) run('A drop', () => { A.connected = false; A.disconnectedAt = now; settle(); });
+        else if (op === 2 && !A.connected) backA();
+        else if (op === 3 && two) {
+          const B = s.seats[1];
+          if (B.connected) run('B drop', () => { B.connected = false; B.disconnectedAt = now; settle(); });
+          else {
+            const how = rejoinKind(s, B, now);
+            run('B back', () => { B.connected = true; B.away = false; B.disconnectedAt = null; settle(new Map([[1, how]])); });
+          }
+        } else if (op === 4 && A.connected && !A.away && abilities < 3 && s.pausedAt === null) {
+          // 本人が特権を使って同じ手番を作り直す
+          abilities++;
+          stats.humanContinues++;
+          run('A ability', () => {
+            const prev = dl();
+            s.match.game.awaiting = [{ id: nextId, seat: 0, kind: 'turn', timer: 'turn', continues: prev.awaitId }];
+            nextId++;
+            syncDeadlines(s, now);
+            settle();
+          });
+        } else if (op === 5) run('settle', () => settle());
+      }
+      stats.scenarios++;
+      if (increases > 0) stats.extended++;
+      if (increases > 1) throw new Error(`seed ${seed}: ${increases} increases\n${trace.join('\n')}`);
+    }
+    if (process.env.PROP_STATS) (await import('node:fs')).writeFileSync(process.env.PROP_STATS, JSON.stringify(stats));
+    // いろいろな順が実際に起きていること
+    expect(stats.extended).toBeGreaterThan(50);
+    expect(stats.awayReturns).toBeGreaterThan(100);
+    expect(stats.keepReturns).toBeGreaterThan(100);
+    expect(stats.pauses).toBeGreaterThan(100);
+    expect(stats.botContinues).toBeGreaterThan(20);
+    expect(stats.humanContinues).toBeGreaterThan(20);
+    expect(stats.backAfterBotContinue).toBeGreaterThan(20);
   });
 });

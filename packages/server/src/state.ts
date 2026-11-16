@@ -238,33 +238,77 @@ function durationFor(s: RoomState, seat: SeatId, timer: AwaitTimer): number {
  * 同じ番号のまま残った待ち（特権の選択の途中の保存）の期限は変えない。
  * 新しい待ちに continues（特権を使って作り直した手番、design-3 §6.1）があり、元の番号の期限が残っていれば、
  * 人間（代役でない）は元の期限をそのまま引き継ぐ（動いている間は時刻、一時停止中は残り時間）。CPU・代役は約1秒（ふつうと同じ）。
- * 元の期限は、消す前に読む。
+ * 元の期限は、消す前に読む。carry は、呼び出し側が先に一覧から消した期限（アラームの処理で期限切れの待ちを消してから auto を適用する場合）。
+ * 復帰で延ばした印（extended）は、同じ席の continues なら、人間でも CPU・代役でも必ず引き継ぐ（decisions §18.2）。
  */
-export function syncDeadlines(s: RoomState, now: number): void {
+export function syncDeadlines(s: RoomState, now: number, carry: readonly Deadline[] = []): void {
   const list = s.match === null ? [] : awaiting(s.match);
-  const before = new Map(s.deadlines.map((d) => [d.awaitId, d] as const));
+  const before = new Map([...carry, ...s.deadlines].map((d) => [d.awaitId, d] as const));
   const ids = new Set(list.map((a) => a.id));
   s.deadlines = s.deadlines.filter((d) => ids.has(d.awaitId));
   for (const a of list) {
     if (s.deadlines.some((d) => d.awaitId === a.id)) continue;
     const d: Deadline = { awaitId: a.id, seat: a.seat, kind: a.kind, timer: a.timer, at: null, remaining: null, extended: false };
     const prev = a.continues === undefined ? undefined : before.get(a.continues);
-    if (prev !== undefined && prev.seat === a.seat && !isBotSeat(s, a.seat)) {
-      d.at = prev.at;
-      d.remaining = prev.remaining;
-      d.extended = prev.extended;
+    const same = prev !== undefined && prev.seat === a.seat ? prev : undefined;
+    // 期限の時刻：人間（代役でない）は元の期限をそのまま、CPU・代役は約1秒
+    if (same !== undefined && !isBotSeat(s, a.seat)) {
+      d.at = same.at;
+      d.remaining = same.remaining;
     } else {
       setDeadlineIn(s, d, durationFor(s, a.seat, a.timer), now);
     }
+    // 印：同じ手番の続きなら必ず引き継ぐ
+    if (same !== undefined) d.extended = same.extended;
     s.deadlines.push(d);
   }
   s.deadlines.sort((x, y) => x.awaitId - y.awaitId);
 }
 
-/** 席の待ちの期限を秒数いっぱいに付け直す（代役への切り替え・新しく席に着いたとき）。 */
+/** 席の待ちの期限を秒数いっぱいに付け直す（新しく席に着いたとき）。 */
 export function resetSeatDeadlines(s: RoomState, seat: SeatId, now: number): void {
   for (const d of s.deadlines) {
     if (d.seat === seat) setDeadlineIn(s, d, durationFor(s, seat, d.timer), now);
+  }
+}
+
+/**
+ * 代役に切り替わったとき（decisions §18.2）。期限を約1秒後（cpuDelayMs）にする。ただし、いまの残り時間は増やさない
+ * （新しい残り = min(いまの残り, cpuDelayMs)。一時停止中は残り時間で同じ扱い）。
+ */
+export function switchSeatDeadlinesToBot(s: RoomState, seat: SeatId, now: number): void {
+  for (const d of s.deadlines) {
+    if (d.seat !== seat) continue;
+    const left = Math.max(0, d.at !== null ? d.at - now : (d.remaining ?? 0));
+    setDeadlineIn(s, d, Math.min(left, s.timing.cpuDelayMs), now);
+  }
+}
+
+/** hello で同じ席に戻った人の扱い。代役だったか（全員不在の一時停止中は代役への切り替えが次の入力まで遅れるので、猶予を過ぎていれば代役だったとみなす）。 */
+export function rejoinKind(s: RoomState, r: SeatRec, now: number): 'away' | 'keep' {
+  return r.away || (!r.connected && r.disconnectedAt !== null && now >= r.disconnectedAt + s.timing.disconnectGraceMs) ? 'away' : 'keep';
+}
+
+/**
+ * 入力のたびの点検のうち、期限にかかわる部分（room.ts の settle から呼ぶ）。
+ * 1. 切断から猶予がたった人を代役にする（残り時間は増やさない）。2. 一時停止と再開。3. engine の待ちと期限を合わせる。
+ * 4. 席に着いた人の待ち（new = 秒数いっぱい、away = 代役からの復帰、keep = 猶予の中の復帰。decisions §18.1・§18.2）。
+ */
+export function settleDeadlines(s: RoomState, now: number, rejoined: ReadonlyMap<SeatId, 'new' | 'away' | 'keep'>): void {
+  for (const seat of SEATS) {
+    const r = seatRec(s, seat);
+    if (r.kind === 'human' && !r.connected && !r.away && r.disconnectedAt !== null && now >= r.disconnectedAt + s.timing.disconnectGraceMs) {
+      r.away = true;
+      switchSeatDeadlinesToBot(s, seat, now);
+    }
+  }
+  if (connectedHumans(s) === 0) pause(s, now);
+  else resume(s, now);
+  syncDeadlines(s, now);
+  for (const [seat, how] of rejoined) {
+    if (how === 'new') resetSeatDeadlines(s, seat, now);
+    else if (how === 'away') resetSeatDeadlinesOnAwayReturn(s, seat, now);
+    else keepSeatDeadlinesOnRejoin(s, seat, now);
   }
 }
 

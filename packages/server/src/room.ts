@@ -25,7 +25,6 @@ import {
 import type { ClientMessage, CloseCode, ErrorCode, ReqId, RoomView, ServerMessage, StateMessage } from './protocol.ts';
 import {
   buildMatchConfig,
-  connectedHumans,
   deadlineProblems,
   emptySeat,
   ensureHost,
@@ -33,18 +32,16 @@ import {
   isExpired,
   isBotSeat,
   isCurrentFormat,
-  keepSeatDeadlinesOnRejoin,
   modeHasAbilities,
   needsHeartbeat,
   nextAlarm,
   normalizeRules,
-  pause,
-  resetSeatDeadlines,
-  resetSeatDeadlinesOnAwayReturn,
-  resume,
+  rejoinKind,
+  settleDeadlines,
   roomPhase,
   seatRec,
   syncDeadlines,
+  type Deadline,
   type MatchInit,
   type RoomState,
 } from './state.ts';
@@ -472,7 +469,8 @@ export class Room extends DurableObject<Env> {
       if (due === undefined) return;
       s.deadlines = s.deadlines.filter((d) => d.awaitId !== due.awaitId);
       const policy = isBotSeat(s, due.seat) ? 'cpu' : 'timeout';
-      const r = this.applyEngine(tx, { type: 'auto', awaitId: due.awaitId, policy });
+      // 消した期限は、操作のあとの同期まで覚えておく（CPU が特権を使って作り直した手番に、復帰で延ばした印を引き継ぐため）
+      const r = this.applyEngine(tx, { type: 'auto', awaitId: due.awaitId, policy }, [due]);
       if (!r.ok) console.warn('auto rejected', due.awaitId, r.code);
       syncDeadlines(s, tx.now);
     }
@@ -631,8 +629,8 @@ export class Room extends DurableObject<Env> {
     if (seat !== undefined) {
       // 同じ人の復帰。古い接続は閉じる
       const r = seatRec(s, seat);
-      // 代役だったか。全員不在の一時停止中は代役への切り替えが次の入力まで遅れるので、猶予を過ぎていれば代役だったとみなす（settle と同じ条件）
-      const wasAway = r.away || (!r.connected && r.disconnectedAt !== null && tx.now >= r.disconnectedAt + s.timing.disconnectGraceMs);
+      // 代役だったか（席を書き換える前に判定する）
+      const how = rejoinKind(s, r, tx.now);
       for (const o of this.openSockets()) {
         if (o.ws !== ws && o.att.seat === seat) tx.closes.push({ ws: o.ws, code: 4001, reason: 'replaced by a newer connection' });
       }
@@ -641,7 +639,7 @@ export class Room extends DurableObject<Env> {
       r.disconnectedAt = null;
       r.away = false;
       if (s.match === null) r.name = name;
-      tx.rejoined.set(seat, wasAway ? 'away' : 'keep');
+      tx.rejoined.set(seat, how);
     } else {
       const phase = s.match?.phase ?? null;
       if (phase === null) {
@@ -690,7 +688,7 @@ export class Room extends DurableObject<Env> {
   }
 
   /** engine に操作を1つ渡す。成功したら状態・出来事・操作の記録を更新する。 */
-  private applyEngine(tx: Tx, action: Action): { ok: true } | { ok: false; code: string; message: string } {
+  private applyEngine(tx: Tx, action: Action, carry: readonly Deadline[] = []): { ok: true } | { ok: false; code: string; message: string } {
     const s = tx.s;
     if (s.match === null) return { ok: false, code: 'wrongPhase', message: 'no match' };
     const r = applyAction(s.match, action);
@@ -698,7 +696,7 @@ export class Room extends DurableObject<Env> {
     s.match = r.state;
     this.appendEvents(tx, r.events);
     this.logAction(tx, s.match.gameNo, { at: tx.now, action });
-    syncDeadlines(s, tx.now);
+    syncDeadlines(s, tx.now, carry);
     return { ok: true };
   }
 
@@ -752,25 +750,8 @@ export class Room extends DurableObject<Env> {
       if (r.kind !== 'human' || !r.connected) continue;
       if (!alive.some((o) => o.att.seat === seat && o.att.gen === r.gen)) this.markDisconnected(tx, seat);
     }
-    // 切断から猶予がたった人を代役にする
-    for (const seat of SEATS) {
-      const r = seatRec(s, seat);
-      if (r.kind === 'human' && !r.connected && !r.away && r.disconnectedAt !== null && now >= r.disconnectedAt + s.timing.disconnectGraceMs) {
-        r.away = true;
-        resetSeatDeadlines(s, seat, now);
-      }
-    }
-    // 一時停止と再開
-    if (connectedHumans(s) === 0) pause(s, now);
-    else resume(s, now);
-    syncDeadlines(s, now);
-    // 席に着いた本人の待ち（decisions §18.1・§18.2）：新しい席は秒数いっぱい。代役からの復帰は秒数いっぱい、猶予の中の復帰は期限を変えない
-    // （短ければ延ばす）。復帰による延長は、どちらでも合わせて1つの待ちにつき1回だけ
-    for (const [seat, how] of tx.rejoined) {
-      if (how === 'new') resetSeatDeadlines(s, seat, now);
-      else if (how === 'away') resetSeatDeadlinesOnAwayReturn(s, seat, now);
-      else keepSeatDeadlinesOnRejoin(s, seat, now);
-    }
+    // 代役への切り替え・一時停止と再開・期限の同期・席に着いた本人の待ち（state.ts の settleDeadlines。decisions §18.1・§18.2）
+    settleDeadlines(s, now, tx.rejoined);
     tx.rejoined.clear();
     ensureHost(s);
     if (needsHeartbeat(s, alive.some((o) => o.att.seat === null))) {
