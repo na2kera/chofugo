@@ -7,6 +7,8 @@ import { animsFor, emptyFeed, eventMessage, ingest } from './events.ts';
 import { errorText } from './errors.ts';
 import { dimReason, DIM_REASON_TEXT, evaluateSelection, initialRespondSelection } from './selection.ts';
 
+type TurnMine = Extract<MyAwaiting, { kind: 'turn' }>;
+
 const g = (cards: string[], rank: number | null): Play => ({ shape: 'group', cards, rank: rank as never, jokers: [] });
 const lp = (cards: string[], rank: number | null): LegalPlay => ({ cards, shape: 'group', play: g(cards, rank), foul: false });
 const ev = (seq: number, body: Record<string, unknown>, gameNo = 1): VisibleEvent => ({ seq, gameNo, ...body }) as VisibleEvent;
@@ -72,7 +74,7 @@ describe('4止めの返しの選び方（design-2 §4.3）', () => {
 });
 
 describe('出せない理由（design-2 §4.5）', () => {
-  const turn: MyAwaiting = { awaitId: 1, kind: 'turn', leader: true, canPass: false, plays: [lp(['diamond-3'], 3), lp(['diamond-3', 'club-3'], 3)] };
+  const turn: TurnMine = { awaitId: 1, kind: 'turn', leader: true, canPass: false, plays: [lp(['diamond-3'], 3), lp(['diamond-3', 'club-3'], 3)], abilities: [], skipAvailable: false };
 
   it('ダイヤの3の義務があるとき', () => {
     expect(dimReason(turn, turn.plays, [], 'spade-9', null, { openingCard: 'diamond-3' })).toBe('opening');
@@ -82,13 +84,13 @@ describe('出せない理由（design-2 §4.5）', () => {
   });
 
   it('激縛りが発動しているとき', () => {
-    const t: MyAwaiting = { ...turn, leader: false, canPass: true, plays: [lp(['heart-8'], 8)] };
+    const t: TurnMine = { ...turn, leader: false, canPass: true, plays: [lp(['heart-8'], 8)] };
     expect(dimReason(t, t.plays, [], 'heart-9', ['heart'], { seqLock: { suits: ['heart'], rank: 7 as never } })).toBe('seqLock');
     expect(DIM_REASON_TEXT.seqLock).toBe('激縛りの続きに合わない');
   });
 
   it('その2の状態がなければ、その1と同じ判定', () => {
-    const t: MyAwaiting = { ...turn, leader: false, canPass: true, plays: [lp(['heart-8'], 8)] };
+    const t: TurnMine = { ...turn, leader: false, canPass: true, plays: [lp(['heart-8'], 8)] };
     expect(dimReason(t, t.plays, [], 'spade-9', ['heart'])).toBe('suitLock');
     expect(dimReason(t, t.plays, [], 'heart-5', ['heart'])).toBe('weaker');
     expect(dimReason(t, t.plays, [], 'spade-9', ['heart'], { seqLock: null, openingCard: null })).toBe('suitLock');

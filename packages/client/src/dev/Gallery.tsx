@@ -43,7 +43,7 @@ function mockTurn(): StateMessage {
         suitLock: ['spade', 'heart'],
       }),
       awaiting: [{ id: 21, seat: 0, kind: 'turn', timer: 'turn' }],
-      mine: { awaitId: 21, kind: 'turn', leader: false, plays, canPass: true },
+      mine: { awaitId: 21, kind: 'turn', leader: false, plays, canPass: true, abilities: [], skipAvailable: false },
     }),
     deadlines: [deadline(0, 'turn', 18_000, 21)],
   });
@@ -96,7 +96,7 @@ function hand16(): StateMessage {
         myExchange: { gave: ['spade-4', 'club-5'], received: ['spade-15', 'joker-1'] },
       }),
       awaiting: [{ id: 41, seat: 0, kind: 'turn', timer: 'turn' }],
-      mine: { awaitId: 41, kind: 'turn', leader: false, plays, canPass: true },
+      mine: { awaitId: 41, kind: 'turn', leader: false, plays, canPass: true, abilities: [], skipAvailable: false },
     }),
     deadlines: [deadline(0, 'turn', 8_000, 41)],
   });
@@ -160,7 +160,7 @@ function placedState(): StateMessage {
         field: [],
       }),
       awaiting: [{ id: 60, seat: 0, kind: 'turn', timer: 'turn' }],
-      mine: { awaitId: 60, kind: 'turn', leader: true, plays: [legal(group(['club-3'], 3)), legal(group(['diamond-4'], 4))], canPass: false },
+      mine: { awaitId: 60, kind: 'turn', leader: true, plays: [legal(group(['club-3'], 3)), legal(group(['diamond-4'], 4))], canPass: false, abilities: [], skipAvailable: false },
     }),
     deadlines: [deadline(0, 'turn', 29_000, 60)],
   });
@@ -341,6 +341,8 @@ function opening(): StateMessage {
         kind: 'turn',
         leader: true,
         canPass: false,
+        abilities: [],
+        skipAvailable: false,
         plays: [legal(group(['diamond-3'], 3)), legal(group(['diamond-3', 'club-3'], 3)), legal(group(['diamond-3', 'joker-0'], 3, [{ card: 'joker-0', rank: 3, suit: null }]))],
       },
     }),
@@ -358,7 +360,7 @@ function gifted(): StateMessage {
       ...view,
       rules: CUSTOM_RULES,
       awaiting: [{ id: 75, seat: 0, kind: 'turn', timer: 'turn' }],
-      mine: { awaitId: 75, kind: 'turn', leader: false, canPass: true, plays: [legal(group(['spade-11'], 11)), legal(group(['heart-13'], 13)), legal(group(['club-14'], 14))] },
+      mine: { awaitId: 75, kind: 'turn', leader: false, canPass: true, plays: [legal(group(['spade-11'], 11)), legal(group(['heart-13'], 13)), legal(group(['club-14'], 14))], abilities: [], skipAvailable: false },
     },
     deadlines: [deadline(0, 'turn', 24_000, 75)],
   };

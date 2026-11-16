@@ -101,7 +101,7 @@ describe('手の選び方', () => {
 });
 
 describe('出せない理由', () => {
-  const turn = { awaitId: 1, kind: 'turn' as const, leader: false, plays: PLAYS, canPass: true };
+  const turn = { awaitId: 1, kind: 'turn' as const, leader: false, plays: PLAYS, canPass: true, abilities: [], skipAvailable: false };
   it('自分の番でない', () => {
     expect(dimReason(null, [], [], 'club-9', null)).toBe('notYourTurn');
   });

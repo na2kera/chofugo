@@ -60,6 +60,14 @@ export function cardLabel(id: CardId): string {
   return `${SUIT_NAME[f.suit]}の${f.key}`;
 }
 
+/** 1枚の短い表記（「♠K」「♥10」「ジョーカー」）。透視で見たカードや強奪のメッセージに使う（design-3 §4.4、§4.5）。 */
+export function cardShort(id: CardId): string {
+  const f = faceOf(id);
+  if (f === null) return '?';
+  if (f.kind === 'joker') return 'ジョーカー';
+  return `${SUIT_MARK[f.suit]}${f.key}`;
+}
+
 /** 場のジョーカーが何の代わりかの短い表記（「7」「♠6」）。決まっていなければ null。 */
 export function jokerStandIn(play: Play, card: CardId): string | null {
   const j = play.jokers.find((x) => x.card === card);

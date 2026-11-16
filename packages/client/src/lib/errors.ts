@@ -25,6 +25,12 @@ export function errorText(e: Pick<ErrorMessage, 'code' | 'engineError'>): string
           return 'そのカードは渡せない';
         case 'invalidChoice':
           return 'そのカードは選べない';
+        case 'invalidAbility':
+          return 'その特権は使えない';
+        case 'abilityNotUsable':
+          return 'いまは その特権を使えない';
+        case 'cannotSkip':
+          return 'この手には スキップを付けられません';
         default:
           return 'その操作はできなかった';
       }

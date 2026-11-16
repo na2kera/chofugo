@@ -36,6 +36,7 @@ export const FULL_MS: Record<AwaitKind, number> = {
   respond: 10_000,
   exchangeGive: 60_000,
   choice: 15_000,
+  abilitySelect: 60_000,
 };
 
 /** バーの点灯数（0〜segments）。持ち時間より長い残り（復帰の付け直しなど）は満タンにする。 */

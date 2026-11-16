@@ -3,7 +3,7 @@
 
 import type { ClientAction, ClientMessage, ErrorMessage, ServerMessage, StateMessage } from '@chofugo/server/protocol';
 import type { SeatId } from '@chofugo/engine';
-import { animsFor, emptyFeed, enqueueAnims, eventMessage, ingest, type Anim, type Feed } from '../lib/events.ts';
+import { animsFor, emptyFeed, enqueueAnims, eventLines, ingest, type Anim, type Feed } from '../lib/events.ts';
 import { nextReqId, pendingAfter, PENDING_TIMEOUT_MS, type Pending } from '../lib/pending.ts';
 import { backoffMs, closeOutcome, PING_MS, shouldGiveUp, SILENCE_MS } from '../lib/reconnect.ts';
 import { ClockSkew } from '../lib/timer.ts';
@@ -331,11 +331,7 @@ export class RoomClient {
       ownActionAccepted,
     });
     const names = (seat: SeatId) => seatName(msg.room.seats, seat, msg.seat);
-    const lines: string[] = [];
-    for (const e of fresh) {
-      const t = eventMessage(e, names, msg.seat);
-      if (t !== null) lines.push(t);
-    }
+    const lines = eventLines(fresh, names, msg.seat);
     const reset = msg.eventsFull || (prev !== null && prev.matchId !== msg.matchId);
     if (reset) {
       // 接続・復帰の直後・新しい試合：前のメッセージ・演出は捨て、最新の状態だけを描く

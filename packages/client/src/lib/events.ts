@@ -3,7 +3,7 @@
 // 出来事の種類ごとのメッセージと演出は、下の2つの関数（表）で決める。種類は engine の VisibleEvent が正。
 
 import type { CardId, Play, SeatId, VisibleEvent } from '@chofugo/engine';
-import { playSummary } from './cards.ts';
+import { cardShort, playSummary, rankKey } from './cards.ts';
 
 /**
  * 出たカードの履歴の1行。turn = 手番で出した手、respond = 返しの一周で返した手（4止めの4を含む）、
@@ -143,6 +143,8 @@ export function eventMessage(e: VisibleEvent, nameOf: NameOf, me: SeatId | null 
     case 'pass':
       return `${nameOf(e.seat)} は パスした`;
     case 'fieldCleared':
+      // 強制流しは、直前の特権の出来事で「強制流し！」と出しているので重ねない（design-3 §4.5）
+      if (e.reason === 'forceFlush') return null;
       if (e.reason === 'flush_on_8') return '8切り！';
       if (e.reason === 'triple3_trump') return '砂嵐！';
       return '場が流れた';
@@ -189,7 +191,64 @@ export function eventMessage(e: VisibleEvent, nameOf: NameOf, me: SeatId | null 
     case 'choiceSkip':
       // 選んでいる間は「◯◯ が選んでいます」の表示で分かる。選ばなかったときはメッセージなし
       return null;
+    // その3の出来事（design-3 §4.5）
+    case 'abilitySelectStart':
+      // 選んでいる間は選択の画面の案内で分かる
+      return null;
+    case 'abilitiesChosen':
+      return `${nameOf(e.seat)} が 特権を ${e.count}個 選んだ`;
+    case 'ability':
+      return abilityMessage(e, nameOf, me);
   }
+}
+
+/** 特権の使用のメッセージ。革命は続く revolution の出来事で「革命！」と出すので、ここでは出さない。 */
+function abilityMessage(e: Extract<VisibleEvent, { type: 'ability' }>, nameOf: NameOf, me: SeatId | null): string | null {
+  const target = e.target ?? null;
+  switch (e.ability) {
+    case 'peek':
+      if (target === null) return null;
+      if (me !== null && target === me) return `${nameOf(e.seat)} に ${e.cards?.length ?? 0}枚 見られた`;
+      return `${nameOf(e.seat)} が ${nameOf(target)} に 透視を使った`;
+    case 'steal':
+      if (target === null) return null;
+      if (me !== null && e.seat === me && e.given !== undefined && e.taken !== undefined) return `${cardShort(e.given)} を渡して ${cardShort(e.taken)} を受け取った`;
+      if (me !== null && target === me && e.given !== undefined && e.taken !== undefined) return `${cardShort(e.taken)} を取られて ${cardShort(e.given)} を受け取った`;
+      return `${nameOf(e.seat)} が ${nameOf(target)} に 強奪を使った`;
+    case 'forceFlush':
+      return '強制流し！';
+    case 'ban':
+      return e.rank === undefined ? '独裁！' : `独裁！ ${rankKey(e.rank)} は出せない`;
+    case 'revolution':
+      return null;
+    case 'skip':
+      return 'スキップ！';
+  }
+}
+
+/**
+ * 1回の state で届いた出来事のメッセージの列（design-3 §4.5）。
+ * 特権のスキップのあとに飛ばされた席（skipped）が続いたら、「スキップ！ △△ を飛ばした」の1行にまとめる
+ * （K スキップと重なったときも、特権のスキップの言い方にする）。
+ */
+export function eventLines(events: readonly VisibleEvent[], nameOf: NameOf, me: SeatId | null = null): string[] {
+  const out: string[] = [];
+  let skipAt = -1;
+  for (const e of events) {
+    if (e.type === 'ability' && e.ability === 'skip') {
+      skipAt = out.length;
+      out.push('スキップ！');
+      continue;
+    }
+    if (e.type === 'skipped' && skipAt >= 0 && e.seats.length > 0) {
+      out[skipAt] = `スキップ！ ${e.seats.map((x) => nameOf(x)).join('・')} を飛ばした`;
+      skipAt = -1;
+      continue;
+    }
+    const t = eventMessage(e, nameOf, me);
+    if (t !== null) out.push(t);
+  }
+  return out;
 }
 
 /** 順位が確定したときのメッセージ（§7.7）。届いた順位と理由から作り、「最下位」と決め打ちしない。 */

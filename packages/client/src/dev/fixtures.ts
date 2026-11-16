@@ -52,6 +52,11 @@ export function gameView(over: Partial<GameView> = {}): GameView {
     exchange: null,
     myExchange: null,
     starter: 0,
+    abilities: null,
+    myAbilities: null,
+    ban: null,
+    peek: null,
+    peekedMine: null,
     ...over,
   };
 }

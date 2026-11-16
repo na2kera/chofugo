@@ -53,6 +53,7 @@ export function RoomBody({ snap, api, fixedNow }: { snap: Snapshot; api: RoomApi
     case null:
       return <Lobby {...props} />;
     case 'exchange':
+    case 'ability':
     case 'play':
       return <Table {...props} />;
     case 'gameResult':
