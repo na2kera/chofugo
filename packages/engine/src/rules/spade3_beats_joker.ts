@@ -1,25 +1,20 @@
 // スペ3返し（decisions §6.5、§6.2 の返しの一周、§14.3、§14.7）。
 
-import type { RuleCtx, RuleModule } from './types.ts';
+import type { RuleModule } from './types.ts';
 import { isUnbeatableJokers } from '../hand.ts';
 
 const SPADE3 = 'spade-3';
-
-/** 返す手段がないことが全員に分かる: スペードの3が見えている、または独裁で3が封じられている（engine-assumptions.md G）。 */
-function cannotBeReturned(ctx: RuleCtx): boolean {
-  return ctx.isPublic(SPADE3) || ctx.game.ban === 3;
-}
 
 export const spade3BeatsJoker: RuleModule = {
   id: 'spade3_beats_joker',
   afterPlay(ctx, played) {
     if (played.via !== 'turn' || !(isUnbeatableJokers(played.play) && played.play.cards.length === 1)) return [];
-    // 省く条件: スペードの3がすでに全員に見えている（捨て札・場）。独裁で3が封じられているときも返せない（その3）
-    if (cannotBeReturned(ctx)) return [];
+    // 省く条件: スペードの3がすでに全員に見えている（捨て札・場）
+    if (ctx.isPublic(SPADE3)) return [];
     return [{ type: 'returnRound', rule: 'spade3_beats_joker' }];
   },
   canStartReturnRound(ctx) {
-    return !cannotBeReturned(ctx);
+    return !ctx.isPublic(SPADE3);
   },
   onReturnRoundSkipped(_ctx, source) {
     // 返す手段がないジョーカーの1枚出しとして、すぐ場を流す（§2.5）

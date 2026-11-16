@@ -454,29 +454,40 @@ describe('独裁（§5.6、§14.7、§14.8、§17.5）', () => {
     expect(viewFor(d.state, 0).mine).toMatchObject({ canPass: true });
   });
 
-  it('3を封じるとスペ3返しの一周は行わず、すぐ流す。4を封じると4止めの一周を行わない', () => {
+  it('3を封じると、スペ3返しの一周は始まるが、スペードの3では返せない（全員スキップで不成立）', () => {
     const d = sc(['spade3_beats_joker'], ['X0 S5', 'S3 H4', 'D3 D4', 'C3 C4'], ['ban']);
     d.use(0, 'ban', { rank: 3 });
     const ev = d.play(0, 'X0');
-    expect(ev.map((e) => e.type)).toEqual(['play', 'fieldCleared']);
-    expect(ev[1]).toMatchObject({ reason: 'jokerUnbeatable', leader: 0 });
+    expect(ev.map((e) => e.type)).toEqual(['play', 'returnRoundStart']);
+    expect(d.current()).toMatchObject({ seat: 1, kind: 'respond' });
+    expect(legalPlays(d.state, 1)).toEqual([]);
+    expect(viewFor(d.state, 1).mine).toMatchObject({ kind: 'respond', plays: [] });
+    const r = d.try({ type: 'respond', seat: 1, awaitId: d.current().id, cards: cs('S3') });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe('invalidResponse');
+    d.respond(1, null);
+    d.respond(2, null);
+    d.respond(3, null);
+    expect(d.events.at(-1)).toMatchObject({ type: 'fieldCleared', reason: 'returnFailed', leader: 0 });
     expect(d.game.ban).toBeNull();
-
-    const f = sc(['flush_on_8', 'block_flush_with_4'], ['S8 S5', 'H4 D4', 'D3 D9', 'C3 C9'], ['ban']);
-    f.use(0, 'ban', { rank: 4 });
-    const ev2 = f.play(0, 'S8');
-    expect(ev2.map((e) => e.type)).toEqual(['play', 'fieldCleared']);
-    expect(ev2[1]).toMatchObject({ reason: 'flush_on_8' });
   });
 
-  it('返しの一周の途中でも、封じた数字では返せない（一周は封じる前に始まっている）', () => {
-    // 席1がジョーカーを出す前に、席0が3を封じることはできない（手番が違う）ので、4止めの一周の場面で確かめる
+  it('4を封じると、4止めの一周は始まるが、4の2枚では返せない（8切りで流れる）', () => {
     const d = sc(['flush_on_8', 'block_flush_with_4'], ['S5 S6', 'H8 H9', 'D4 C4 D9', 'C3 C9'], ['ban']);
     d.use(0, 'ban', { rank: 4 });
     d.play(0, 'S5');
-    d.play(1, 'H8'); // 4が封じられているので返しの一周は行わず、8切り
-    expect(d.events.some((e) => e.type === 'returnRoundStart')).toBe(false);
+    d.play(1, 'H8');
+    expect(d.events.at(-1)).toMatchObject({ type: 'returnRoundStart', rule: 'block_flush_with_4' });
+    expect(d.current()).toMatchObject({ seat: 2, kind: 'respond' });
+    expect(legalPlays(d.state, 2)).toEqual([]);
+    const r = d.try({ type: 'respond', seat: 2, awaitId: d.current().id, cards: cs('D4 C4') });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe('invalidResponse');
+    d.respond(2, null);
+    d.respond(3, null);
+    d.respond(0, null);
     expect(d.events.at(-1)).toMatchObject({ type: 'fieldCleared', reason: 'flush_on_8', leader: 1 });
+    expect(d.game.ban).toBeNull();
   });
 
   it('砂嵐も封じた数字なら出せない', () => {
