@@ -1,11 +1,11 @@
 // 人間1人＋CPU3人、時間切れ、期限と本人の操作の行き違い、アラームの二重発火、途中参加、無制限の試合の終了。
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Client, createRoom, sleep, startServer } from './helpers.mjs';
+import { Client, createRoom, deadlineProblems, sleep, startServer, PORTS } from './helpers.mjs';
 
 let server;
 beforeAll(async () => {
-  server = await startServer({ port: 8802 });
+  server = await startServer({ port: PORTS.cpu });
 });
 afterAll(async () => {
   await server?.stop();
@@ -33,6 +33,7 @@ describe('CPU と時間切れ', () => {
     // CPU の操作（auto）が出来事として届いている
     const cpuPlays = me.states.flatMap((s) => s.events).filter((e) => (e.type === 'play' || e.type === 'pass') && e.seat !== 0);
     expect(cpuPlays.length).toBeGreaterThan(20);
+    expect(await deadlineProblems(server.base, roomId)).toEqual([]);
     me.close();
   });
 
@@ -84,7 +85,7 @@ describe('CPU と時間切れ', () => {
     await host.connect();
     host.hello();
     await host.waitState((s) => s.isHost);
-    host.send({ type: 'setConfig', rules: ['flush_on_8', 'revolution'], gameCount: null });
+    host.send({ type: 'setConfig', mode: 'daifugo', rules: ['flush_on_8', 'revolution'], gameCount: null });
     await host.waitState((s) => s.room.config.gameCount === null);
     host.send({ type: 'start' });
     await host.waitState((s) => s.matchPhase === 'gameResult', 60_000);

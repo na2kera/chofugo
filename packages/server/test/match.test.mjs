@@ -1,13 +1,13 @@
 // 4人で1試合（5ゲーム）を最後まで進める。拒否されるべき操作と、手札の漏れも確かめる。
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Client, checkNoLeak, createRoom, joinAll, startServer } from './helpers.mjs';
+import { Client, checkNoLeak, createRoom, deadlineProblems, joinAll, startServer, PORTS } from './helpers.mjs';
 
 const ALL8 = ['flush_on_8', 'revolution', 'temp_reverse_on_j', 'spade3_beats_joker', 'suit_lock', 'runs', 'forbidden_finish', 'dethrone'];
 
 let server;
 beforeAll(async () => {
-  server = await startServer({ port: 8801 });
+  server = await startServer({ port: PORTS.match });
 });
 afterAll(async () => {
   await server?.stop();
@@ -35,10 +35,10 @@ describe('4人で1試合', () => {
     expect((await fifth.waitClosed()).code).toBe(4002);
 
     // ホスト以外のホスト操作
-    expect((await p1.waitError(p1.send({ type: 'setConfig', rules: ALL8, gameCount: 5 }))).code).toBe('notHost');
+    expect((await p1.waitError(p1.send({ type: 'setConfig', mode: 'daifugo', rules: ALL8, gameCount: 5 }))).code).toBe('notHost');
     expect((await p1.waitError(p1.send({ type: 'start' }))).code).toBe('notHost');
     // 壊れたメッセージ
-    expect((await p2.waitError(p2.send({ type: 'setConfig', rules: ['nope'], gameCount: 5 }))).code).toBe('badMessage');
+    expect((await p2.waitError(p2.send({ type: 'setConfig', mode: 'daifugo', rules: ['nope'], gameCount: 5 }))).code).toBe('badMessage');
     p2.sendRaw('{not json');
     p2.sendRaw(JSON.stringify({ type: 'action', matchId: 'm', action: { type: 'play', awaitId: 1, cards: ['spade-3'], extra: 1 }, reqId: 900 }));
     p2.sendRaw(JSON.stringify({ type: 'hello', token: 'short', name: 'x', reqId: 901 }));
@@ -57,10 +57,10 @@ describe('4人で1試合', () => {
     expect((await p3.waitError(p3.hello())).code).toBe('alreadyJoined');
     expect((await p3.waitError(p3.send({ type: 'action', matchId: 'nomatch', action: { type: 'pass', awaitId: 1 } }))).code).toBe('wrongPhase');
     // 設定の誤り（前提のルールはその1にはないので、知らない組み合わせはない。ゲーム数の誤りは形の検査で落ちる）
-    expect((await host.waitError(host.send({ type: 'setConfig', rules: ALL8, gameCount: 7 }))).code).toBe('badMessage');
+    expect((await host.waitError(host.send({ type: 'setConfig', mode: 'daifugo', rules: ALL8, gameCount: 7 }))).code).toBe('badMessage');
 
     // ルール8種を ON にして開始
-    host.send({ type: 'setConfig', rules: ALL8, gameCount: 5 });
+    host.send({ type: 'setConfig', mode: 'daifugo', rules: ALL8, gameCount: 5 });
     await p3.waitState((s) => s.room.config.rules.length === 8);
     for (const c of clients) c.auto = true;
     host.send({ type: 'start' });
@@ -68,7 +68,7 @@ describe('4人で1試合', () => {
     const matchId = host.state.matchId;
     expect(typeof matchId).toBe('string');
     // 開始後は設定を変えられない
-    expect((await host.waitError(host.send({ type: 'setConfig', rules: [], gameCount: 5 }))).code).toBe('wrongPhase');
+    expect((await host.waitError(host.send({ type: 'setConfig', mode: 'daifugo', rules: [], gameCount: 5 }))).code).toBe('wrongPhase');
     // 試合中の参加はできない
     const late = new Client(server.base, roomId, { name: 'late' });
     await late.connect();
@@ -84,6 +84,10 @@ describe('4人で1試合', () => {
     for (const c of clients) expect(c.rejectedOwn).toEqual([]);
     // 他人の手札が届いていない
     expect(checkNoLeak(clients)).toEqual([]);
+    // 一時停止中でなければ、すべての待ちに期限があった（design-2 §3.4）
+    expect(await deadlineProblems(server.base, roomId)).toEqual([]);
+    // 外へ出す設定にモードが入る
+    expect(host.state.room.config.mode).toBe('daifugo');
     // 出来事の通し番号は重複しない
     for (const c of clients) {
       const seqs = c.states.filter((s) => !s.eventsFull && s.matchId === matchId).flatMap((s) => s.events.map((e) => e.seq));

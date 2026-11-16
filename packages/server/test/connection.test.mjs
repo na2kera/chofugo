@@ -3,11 +3,11 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Client, createRoom, sleep, startServer, testRoute } from './helpers.mjs';
+import { Client, createRoom, sleep, startServer, testRoute, PORTS } from './helpers.mjs';
 
 let server;
 beforeAll(async () => {
-  server = await startServer({ port: 8803 });
+  server = await startServer({ port: PORTS.connection });
 });
 afterAll(async () => {
   // E2E_LOG_DIR を指定したときだけ、開発サーバーのログを書き出す（調べもの用）
@@ -38,7 +38,7 @@ describe('切断と復帰', () => {
       c.hello();
       await c.waitState((s) => s.seat !== null);
     }
-    A.send({ type: 'setConfig', rules: ['flush_on_8', 'revolution', 'runs'], gameCount: 10 });
+    A.send({ type: 'setConfig', mode: 'daifugo', rules: ['flush_on_8', 'revolution', 'runs'], gameCount: 10 });
     await A.waitState((s) => s.room.config.gameCount === 10);
     A.send({ type: 'start' });
     await A.waitState((s) => s.matchPhase === 'play' || s.matchPhase === 'exchange');

@@ -2,9 +2,9 @@
 // あわせて、操作の記録から試合を再現できることを確かめる。
 
 import { afterAll, describe, expect, it } from 'vitest';
-import { Client, checkNoLeak, createRoom, joinAll, sleep, startServer } from './helpers.mjs';
+import { Client, checkNoLeak, createRoom, joinAll, sleep, startServer, PORTS } from './helpers.mjs';
 
-const PORT = 8804;
+const PORT = PORTS.restart;
 let server;
 afterAll(async () => {
   await server?.stop();

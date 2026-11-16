@@ -2,11 +2,11 @@
 // 秒数の差し替えとテスト用の経路が使えないこと、Origin・ルーム ID・本文の大きさの検査を確かめる。
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createRoom, startServer } from './helpers.mjs';
+import { createRoom, startServer, PORTS } from './helpers.mjs';
 
 let server;
 beforeAll(async () => {
-  server = await startServer({ port: 8805, testMode: false });
+  server = await startServer({ port: PORTS.prod, testMode: false });
 });
 afterAll(async () => {
   await server?.stop();
@@ -19,7 +19,7 @@ describe('本番と同じ設定', () => {
   it('秒数の差し替えとテスト用の経路は使えない', async () => {
     expect((await post('/api/rooms', JSON.stringify({ timing: { turnMs: 100 } }))).status).toBe(400);
     const roomId = await createRoom(server.base);
-    for (const name of ['alarm', 'replay', 'instance']) {
+    for (const name of ['alarm', 'replay', 'instance', 'check', 'oldformat']) {
       expect((await post(`/api/rooms/${roomId}/test/${name}`)).status).toBe(404);
     }
   });

@@ -2,8 +2,11 @@
 // ここに置く関数は時計・ストレージ・接続に触れない（呼び出し側が now を渡す）。
 
 import {
+  ALL_RULE_IDS,
+  CUSTOM_MODE_RULE_IDS,
   DAIFUGO_MODE_DEFAULT_RULES,
   DAIFUGO_MODE_RULE_IDS,
+  RULE_MODULES,
   SEATS,
   awaiting,
   type AwaitKind,
@@ -15,7 +18,15 @@ import {
   type RuleId,
   type SeatId,
 } from '@chofugo/engine';
+import type { GameMode } from './protocol.ts';
 import { humanTimerMs, type Timing } from './timing.ts';
+
+/**
+ * 保存する値の形式の番号（design-2 §3.3）。保存の形が変わったら上げる。
+ * 番号の違う保存済みのルームは、失効したルームと同じ扱いにする（再接続を拒否し、保存を消す。decisions §16.6）。
+ * 1 = その1、2 = その2（設定の下書きに mode を足した。engine の MatchState も version 2）。
+ */
+export const STATE_FORMAT = 2;
 
 export type SeatRec = {
   kind: 'empty' | 'human' | 'cpu';
@@ -45,7 +56,7 @@ export type Deadline = {
 export type MatchInit = { matchId: string; config: MatchConfig; seed: [number, number, number, number] };
 
 export type RoomState = {
-  v: 1;
+  v: typeof STATE_FORMAT;
   roomId: string;
   createdAt: number;
   /** 状態の版番号。保存するたびに増える。 */
@@ -53,8 +64,8 @@ export type RoomState = {
   timing: Timing;
   seats: SeatRec[];
   host: SeatId | null;
-  /** ロビーで変更中の設定。 */
-  draft: { rules: RuleId[]; gameCount: GameCount };
+  /** ロビーで変更中の設定。mode は試合中も変えない（試合中の room.config.mode はここから出す）。 */
+  draft: { mode: GameMode; rules: RuleId[]; gameCount: GameCount };
   match: MatchState | null;
   /** 試合の作成に使った設定と種（操作の記録と合わせて試合を再現できる）。 */
   matchInit: MatchInit | null;
@@ -75,14 +86,14 @@ export function emptySeat(): SeatRec {
 
 export function initialRoom(roomId: string, now: number, timing: Timing): RoomState {
   return {
-    v: 1,
+    v: STATE_FORMAT,
     roomId,
     createdAt: now,
     version: 1,
     timing,
     seats: SEATS.map(() => emptySeat()),
     host: null,
-    draft: { rules: DAIFUGO_MODE_DEFAULT_RULES.slice(), gameCount: 5 },
+    draft: { mode: 'daifugo', rules: DAIFUGO_MODE_DEFAULT_RULES.slice(), gameCount: 5 },
     match: null,
     matchInit: null,
     eventLog: [],
@@ -94,9 +105,49 @@ export function initialRoom(roomId: string, now: number, timing: Timing): RoomSt
   };
 }
 
-/** ルール ID を大富豪モードの一覧の順に並べる。 */
-export function orderRules(rules: readonly RuleId[]): RuleId[] {
-  return DAIFUGO_MODE_RULE_IDS.filter((r) => rules.includes(r));
+/** 保存された値の形式が、いまの形式か（design-2 §3.3）。 */
+export function isCurrentFormat(v: unknown): v is RoomState {
+  return typeof v === 'object' && v !== null && (v as { v?: unknown }).v === STATE_FORMAT;
+}
+
+/** モードで選べるルール（decisions §7）。 */
+export function modeRuleIds(mode: GameMode): readonly RuleId[] {
+  return mode === 'daifugo' ? DAIFUGO_MODE_RULE_IDS : CUSTOM_MODE_RULE_IDS;
+}
+
+/**
+ * 設定のルールを正しい形に直す（design-2 §3.1。拒否はしない）。
+ * 1. モードで選べるルール以外を除く。
+ * 2. 前提を満たさないルール（8切りが OFF のときの4止め）を除く（前提の前提も、残らなくなるまで繰り返す）。
+ * 3. ALL_RULE_IDS の順に並べる。
+ */
+export function normalizeRules(mode: GameMode, rules: readonly RuleId[]): RuleId[] {
+  const allowed = modeRuleIds(mode);
+  let set = new Set(rules.filter((r) => allowed.includes(r)));
+  for (;;) {
+    const next = new Set([...set].filter((r) => (RULE_MODULES.find((m) => m.id === r)?.requires ?? []).every((q) => set.has(q))));
+    if (next.size === set.size) break;
+    set = next;
+  }
+  return ALL_RULE_IDS.filter((r) => set.has(r));
+}
+
+/**
+ * 期限についての検査（design-2 §3.4）。一時停止中でなければ、engine のすべての待ちに期限（at）が付いていること。
+ * 期限のない待ちが残るとルームが止まるため。問題の一覧を返す（なければ空）。
+ */
+export function deadlineProblems(s: RoomState): string[] {
+  if (s.match === null || s.pausedAt !== null) return [];
+  const out: string[] = [];
+  for (const a of awaiting(s.match)) {
+    const d = s.deadlines.find((x) => x.awaitId === a.id);
+    if (d === undefined) out.push(`await ${a.id} (${a.kind}, seat ${a.seat}) has no deadline`);
+    else if (d.at === null) out.push(`await ${a.id} (${a.kind}, seat ${a.seat}) has no time`);
+  }
+  for (const d of s.deadlines) {
+    if (!awaiting(s.match).some((a) => a.id === d.awaitId)) out.push(`deadline ${d.awaitId} has no await`);
+  }
+  return out;
 }
 
 export function seatRec(s: RoomState, seat: SeatId): SeatRec {

@@ -37,6 +37,8 @@ pnpm --filter @chofugo/server typecheck    # wrangler types で worker-configura
 pnpm --filter @chofugo/server test
 ```
 
-- `test/*.test.mjs` が、それぞれ自分の開発サーバー（`wrangler dev`、ポート 8801〜8806、一時ディレクトリのストレージ）を起動し、本物の WebSocket で接続して確かめる。終わると開発サーバーを止める。`prod.test.mjs` だけはテスト用の機能を有効にせずに起動する。`origin.test.mjs` は Origin の比較の単体テスト。
-- ファイルは1つずつ順に実行する（`vitest.config.mjs`）。全体で約75秒。
+- `test/*.test.mjs` が、それぞれ自分の開発サーバー（`wrangler dev`、ポート 19480〜19489、インスペクターはその +10 の 19490〜19499、一時ディレクトリのストレージ。割り当ては `test/helpers.mjs` の `PORTS`）を起動し、本物の WebSocket で接続して確かめる。終わると開発サーバーを止める。`prod.test.mjs` だけはテスト用の機能を有効にせずに起動する。`origin.test.mjs` は Origin の比較の単体テスト。
+- ファイルは1つずつ順に実行する（`vitest.config.mjs`）。全体で約100秒。
+- その2の分：`custom.test.mjs`（設定の直し方、16種すべて ON の通しの試合、保存の形式の番号）、`choice.test.mjs`（7渡しの選択の時間切れ・CPU・代役、`give` の中身の見え方）。
+- 通しの試合のテストは、最後に `POST /api/rooms/:id/test/check`（期限についての検査で見つかった問題の一覧、design-2 §3.4）が空であることを確かめる。
 - テストのファイルは JavaScript で書いており、型チェックの対象外（`@types/node` を足していないため）。

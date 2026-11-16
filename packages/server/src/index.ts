@@ -8,6 +8,8 @@
 //   POST /api/rooms/:id/test/alarm でアラームの処理をいま実行する（2回鳴った場合の確認）
 //   POST /api/rooms/:id/test/replay で操作の記録から試合を再現し、保存された状態と一致するかを返す
 //   POST /api/rooms/:id/test/instance で Durable Object のインスタンスの識別子を返す（休止から作り直されたかの確認）
+//   POST /api/rooms/:id/test/check で期限についての検査（design-2 §3.4）で見つかった問題の一覧を返す
+//   POST /api/rooms/:id/test/oldformat で保存している値を古い形式の番号に書き換える（更新をまたいだルームの再現）
 
 import { DEFAULT_TIMING, parseTimingOverride, type Timing } from './timing.ts';
 import type { CreateRoomResponse } from './protocol.ts';
@@ -109,7 +111,7 @@ export default {
         if (!originAllowed(request.headers.get('Origin'), url)) return json({ error: 'forbidden origin' }, 403);
         return await createRoom(request, env);
       }
-      const m = /^\/api\/rooms\/([^/]+)\/(ws|test\/alarm|test\/replay|test\/instance)$/.exec(path);
+      const m = /^\/api\/rooms\/([^/]+)\/(ws|test\/alarm|test\/replay|test\/instance|test\/check|test\/oldformat)$/.exec(path);
       if (m !== null) {
         const roomId = m[1] ?? '';
         if (!ROOM_ID_RE.test(roomId)) return json({ error: 'room not found' }, 404);
@@ -123,6 +125,8 @@ export default {
         if (!isTestMode(env) || request.method !== 'POST') return json({ error: 'not found' }, 404);
         if (m[2] === 'test/replay') return json(await stub.replayCheck());
         if (m[2] === 'test/instance') return json({ instance: await stub.instance() });
+        if (m[2] === 'test/check') return json({ problems: await stub.problems() });
+        if (m[2] === 'test/oldformat') return json({ ok: await stub.makeOldFormat() });
         const version = await stub.runAlarmNow();
         return json({ version });
       }

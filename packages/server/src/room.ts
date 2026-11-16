@@ -23,14 +23,16 @@ import {
 import type { ClientMessage, CloseCode, ErrorCode, ReqId, RoomView, ServerMessage, StateMessage } from './protocol.ts';
 import {
   connectedHumans,
+  deadlineProblems,
   emptySeat,
   ensureHost,
   initialRoom,
   isExpired,
   isBotSeat,
+  isCurrentFormat,
   needsHeartbeat,
   nextAlarm,
-  orderRules,
+  normalizeRules,
   pause,
   resetSeatDeadlines,
   resume,
@@ -45,6 +47,12 @@ import type { Timing } from './timing.ts';
 
 const ROOM_KEY = 'room';
 const ACTIONS_PREFIX = 'actions:';
+/** テスト用：期限についての検査（design-2 §3.4）で見つかった問題の記録。テストのときだけ書く。 */
+const PROBLEMS_KEY = 'test:problems';
+const MAX_PROBLEMS = 50;
+
+/** 読み込んだ結果。stale = 形式の番号が違う保存済みのルーム（失効と同じ扱い、design-2 §3.3）。 */
+type Loaded = RoomState | 'stale' | null;
 /** 1つのルームに同時に開ける接続の数（hello 前の接続を含む）。 */
 const MAX_SOCKETS = 12;
 
@@ -145,7 +153,8 @@ export class Room extends DurableObject<Env> {
     void this.ctx.blockConcurrencyWhile(async () => {
       try {
         const s = this.load();
-        if (s === null) return;
+        // 形式の違うルームは、次の入力（アラームを含む）で閉じる
+        if (s === null || s === 'stale') return;
         const want = nextAlarm(s);
         const target = want === null ? null : want + s.timing.testAlarmLagMs;
         const cur = await this.ctx.storage.getAlarm();
@@ -165,9 +174,14 @@ export class Room extends DurableObject<Env> {
 
   // ---------- 読み書き ----------
 
-  private load(): RoomState | null {
-    const s = this.ctx.storage.kv.get<RoomState>(ROOM_KEY);
-    return s === undefined ? null : s;
+  private load(): Loaded {
+    const s = this.ctx.storage.kv.get<unknown>(ROOM_KEY);
+    if (s === undefined) return null;
+    return isCurrentFormat(s) ? s : 'stale';
+  }
+
+  private isTestMode(): boolean {
+    return (this.env as unknown as Record<string, unknown>)['CHOFUGO_TEST_MODE'] === '1';
   }
 
   private attachment(ws: WebSocket): Attachment | null {
@@ -216,7 +230,22 @@ export class Room extends DurableObject<Env> {
   /** テスト用：アラームの処理をいま実行する（2回鳴った場合の確認）。Worker がテストのときだけ呼ぶ。 */
   async runAlarmNow(): Promise<number | null> {
     await this.alarm();
-    return this.load()?.version ?? null;
+    const s = this.load();
+    return s === null || s === 'stale' ? null : s.version;
+  }
+
+  /** テスト用：期限についての検査（design-2 §3.4）で見つかった問題の一覧。 */
+  async problems(): Promise<string[]> {
+    return this.ctx.storage.kv.get<string[]>(PROBLEMS_KEY) ?? [];
+  }
+
+  /** テスト用：保存している値を、形式の番号の古い値に書き換える（更新をまたいだルームの再現、design-2 §3.5）。 */
+  async makeOldFormat(): Promise<boolean> {
+    const s = this.load();
+    if (s === null || s === 'stale') return false;
+    const old = { ...s, v: 1, draft: { rules: s.draft.rules, gameCount: s.draft.gameCount } };
+    this.ctx.storage.kv.put(ROOM_KEY, old);
+    return true;
   }
 
   /**
@@ -224,7 +253,7 @@ export class Room extends DurableObject<Env> {
    */
   async replayCheck(): Promise<{ ok: boolean; actions: number; reason?: string }> {
     const s = this.load();
-    if (s === null || s.match === null || s.matchInit === null) return { ok: false, actions: 0, reason: 'no match' };
+    if (s === null || s === 'stale' || s.match === null || s.matchInit === null) return { ok: false, actions: 0, reason: 'no match' };
     const created = createMatch(s.matchInit.config, s.matchInit.seed);
     if (!created.ok) return { ok: false, actions: 0, reason: 'createMatch failed' };
     let state = created.state;
@@ -247,8 +276,9 @@ export class Room extends DurableObject<Env> {
     try {
       const s = this.load();
       if (s === null) return new Response('room not found', { status: 404 });
-      // 一時停止の30分を過ぎたルームは、削除の処理がまだでも失効している（decisions §14.15）
-      if (isExpired(s, Date.now())) {
+      // 一時停止の30分を過ぎたルームは、削除の処理がまだでも失効している（decisions §14.15）。
+      // 形式の番号が違う保存済みのルームも同じ扱い（design-2 §3.3）
+      if (s === 'stale' || isExpired(s, Date.now())) {
         await this.closeRoom();
         return new Response('room not found', { status: 404 });
       }
@@ -293,7 +323,7 @@ export class Room extends DurableObject<Env> {
         return;
       }
       const now = Date.now();
-      if (isExpired(s, now)) {
+      if (s === 'stale' || isExpired(s, now)) {
         await this.closeRoom();
         return;
       }
@@ -326,7 +356,7 @@ export class Room extends DurableObject<Env> {
     try {
       const s = this.load();
       if (s === null) return;
-      if (isExpired(s, Date.now())) {
+      if (s === 'stale' || isExpired(s, Date.now())) {
         await this.closeRoom();
         return;
       }
@@ -353,12 +383,12 @@ export class Room extends DurableObject<Env> {
         return;
       }
       const now = Date.now();
-      const tx = new Tx(s, now);
-      tx.alarmFired = true;
-      if (isExpired(s, now)) {
+      if (s === 'stale' || isExpired(s, now)) {
         await this.closeRoom();
         return;
       }
+      const tx = new Tx(s, now);
+      tx.alarmFired = true;
       if (s.hbCheckAt !== null && now >= s.hbCheckAt) s.hbCheckAt = null;
       this.settle(tx);
       this.runExpired(tx);
@@ -439,6 +469,9 @@ export class Room extends DurableObject<Env> {
         case 'exchangeGive':
           action = { type: 'exchangeGive', seat, awaitId: a.awaitId, cards: a.cards };
           break;
+        case 'choose':
+          action = { type: 'choose', seat, awaitId: a.awaitId, cards: a.cards };
+          break;
       }
       const r = this.applyEngine(tx, action);
       if (!r.ok) tx.error(ws, 'actionRejected', r.message, reqId, r.code);
@@ -455,13 +488,14 @@ export class Room extends DurableObject<Env> {
           tx.error(ws, 'wrongPhase', 'rules cannot be changed after the match starts', reqId);
           return;
         }
-        const rules = orderRules(msg.rules);
+        // 形は validate.ts で確かめ済み。ここでは中身を正しい形に直してから保存する（拒否しない、design-2 §3.1）
+        const rules = normalizeRules(msg.mode, msg.rules);
         const err = validateConfig({ matchId: 'draft', rules, gameCount: msg.gameCount });
         if (err !== null) {
           tx.error(ws, 'invalidConfig', err.message, reqId);
           return;
         }
-        s.draft = { rules, gameCount: msg.gameCount };
+        s.draft = { mode: msg.mode, rules, gameCount: msg.gameCount };
         return;
       }
       case 'start': {
@@ -656,6 +690,15 @@ export class Room extends DurableObject<Env> {
   /** 保存・アラームの設定・送信。間に await を挟まない。 */
   private commit(tx: Tx): void {
     const s = tx.s;
+    // 期限についての検査（design-2 §3.4）。テストのときだけ、見つかった問題を記録する（test/check で読む）
+    if (this.isTestMode()) {
+      const problems = deadlineProblems(s);
+      if (problems.length > 0) {
+        console.error('deadline check failed', problems);
+        const prev = this.ctx.storage.kv.get<string[]>(PROBLEMS_KEY) ?? [];
+        this.ctx.storage.kv.put(PROBLEMS_KEY, [...prev, ...problems.map((x) => `v${s.version}: ${x}`)].slice(0, MAX_PROBLEMS));
+      }
+    }
     const want = nextAlarm(s);
     // 期限が過去なら、保存された alarmAt と同じでも設定し直す（アラームの処理が失敗してやり直しが尽きた場合など、
     // 実際のアラームがもうないかもしれない。未来の alarmAt はまだ鳴っていないので、アラームは残っている）
@@ -700,10 +743,11 @@ export class Room extends DurableObject<Env> {
         return { seat, kind: r.kind, name: r.name, connected: r.kind === 'human' && r.connected, away: r.kind === 'human' && r.away };
       }),
       host: s.host,
+      // mode は engine の MatchConfig にないので、試合中も下書きの値を出す（試合中は下書きを変えられない）
       config:
         s.match === null
-          ? { rules: s.draft.rules.slice(), gameCount: s.draft.gameCount }
-          : { rules: s.match.config.rules.slice(), gameCount: s.match.config.gameCount },
+          ? { mode: s.draft.mode, rules: s.draft.rules.slice(), gameCount: s.draft.gameCount }
+          : { mode: s.draft.mode, rules: s.match.config.rules.slice(), gameCount: s.match.config.gameCount },
       paused: s.pausedAt !== null,
     };
   }

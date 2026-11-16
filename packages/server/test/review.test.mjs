@@ -2,11 +2,11 @@
 // ロビーでの無応答、失効したルーム、期限と本人の操作、アラームの二重実行、同時に切れた期限の順番、猶予を過ぎた一時停止と再開。
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Client, chooseAction, createRoom, joinAll, sleep, startServer, testRoute } from './helpers.mjs';
+import { Client, chooseAction, createRoom, joinAll, sleep, startServer, testRoute, PORTS } from './helpers.mjs';
 
 let server;
 beforeAll(async () => {
-  server = await startServer({ port: 8806 });
+  server = await startServer({ port: PORTS.review });
 });
 afterAll(async () => {
   await server?.stop();

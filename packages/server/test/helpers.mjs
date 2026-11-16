@@ -12,6 +12,12 @@ const WRANGLER_JS = join(SERVER_DIR, 'node_modules', 'wrangler', 'bin', 'wrangle
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * テストの開発サーバーのポート（19480〜19489）。インスペクターはその +10（19490〜19499）。
+ * 同じ機械の別のプロジェクトと衝突しないよう、この範囲だけを使う。
+ */
+export const PORTS = { match: 19480, cpu: 19481, connection: 19482, restart: 19483, prod: 19484, review: 19485, custom: 19486, choice: 19487 };
+
 /** 開発サーバーを起動する。persistDir を渡すと、止めて起動し直しても同じストレージを使う。 */
 /** testMode: false なら CHOFUGO_TEST_MODE を渡さない（本番と同じ設定で起動する）。 */
 export async function startServer({ port, persistDir, testMode = true } = {}) {
@@ -24,7 +30,7 @@ export async function startServer({ port, persistDir, testMode = true } = {}) {
     '--port',
     String(port),
     '--inspector-port',
-    String(port + 1000),
+    String(port + 10),
     '--persist-to',
     dir,
     '--show-interactive-dev-session=false',
@@ -262,8 +268,23 @@ function pick(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
+/** 期限についての検査（design-2 §3.4）で見つかった問題の一覧。 */
+export async function deadlineProblems(base, roomId) {
+  return (await testRoute(base, roomId, 'check')).problems;
+}
+
+/** 7渡し・10捨ての選択：手札からでたらめに 0〜max 枚。 */
+export function chooseCards(mine, hand) {
+  const pool = hand.slice();
+  const n = Math.floor(Math.random() * (Math.min(mine.max, pool.length) + 1));
+  const cards = [];
+  while (cards.length < n) cards.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+  return { type: 'choose', awaitId: mine.awaitId, cards };
+}
+
 /** 出せる手からでたらめに選ぶ。親は出せる手があればパスできない。 */
 export function chooseAction(mine, hand) {
+  if (mine.kind === 'choice') return chooseCards(mine, hand);
   if (mine.kind === 'turn') {
     const plays = mine.plays;
     const usePass = mine.canPass && (plays.length === 0 || Math.random() < 0.3);
@@ -317,8 +338,10 @@ export function checkNoLeak(clients) {
       if (!givenByGame.has(gkey)) givenByGame.set(gkey, new Set());
       const given = givenByGame.get(gkey);
       for (const e of msg.events) {
-        if (e.type === 'exchange') {
-          if (e.cards !== null && e.from !== me && e.to !== me) problems.push(`exchange cards shown to non-party ${c.name}`);
+        if (e.type === 'exchange' || e.type === 'give') {
+          if (e.cards !== null && e.from !== me && e.to !== me) problems.push(`${e.type} cards shown to non-party ${c.name}`);
+          if (e.type === 'give' && e.cards === null && typeof e.count !== 'number') problems.push(`give without count to ${c.name}`);
+          // 自分が渡したカードは、受け取った人の手札にあっても見えてよい
           if (e.cards !== null && e.from === me && e.gameNo === gameNo) for (const x of e.cards) given.add(x);
         }
       }
@@ -353,7 +376,8 @@ function collectCards(v, out) {
   } else if (Array.isArray(v)) {
     for (const x of v) collectCards(x, out);
   } else if (v !== null && typeof v === 'object') {
-    for (const x of Object.values(v)) collectCards(x, out);
+    // ダイヤの3スタートの義務のカード（GameView.openingCard）は、最初の親が持っていることがルールで全員に分かる（公開の情報）
+    for (const [k, x] of Object.entries(v)) if (k !== 'openingCard') collectCards(x, out);
   }
 }
 

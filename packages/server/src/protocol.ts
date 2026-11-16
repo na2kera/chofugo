@@ -34,9 +34,22 @@ export type HelloMessage = {
   reqId?: ReqId;
 };
 
-/** ホストだけ、ロビーの間だけ。大富豪モードの8種の ON/OFF とゲーム数。 */
+/**
+ * ロビーのモード（design-2 §3.1）。選べるルールの範囲を決めるロビーの概念で、engine の MatchConfig にはない。
+ * daifugo = 定番8種（DAIFUGO_MODE_RULE_IDS）、custom = 16種（CUSTOM_MODE_RULE_IDS）。
+ */
+export type GameMode = 'daifugo' | 'custom';
+
+/**
+ * ホストだけ、ロビーの間だけ。モード・ルールの ON/OFF・ゲーム数。
+ * 形（知らないモード、配列でない rules、知らないルール ID、重複、型の違う値）は確かめて拒否する（badMessage）。
+ * 形が正しければ、server が中身を直してから保存する（design-2 §3.1、§6.5）：
+ * モードで選べないルールを除く → 前提を満たさないルール（8切りのない4止め）を除く → ALL_RULE_IDS の順に並べる。
+ * 直した結果は次の state の room.config で届く。
+ */
 export type SetConfigMessage = {
   type: 'setConfig';
+  mode: GameMode;
   rules: RuleId[];
   gameCount: GameCount;
   reqId?: ReqId;
@@ -50,7 +63,9 @@ export type ClientAction =
   | { type: 'play'; awaitId: number; cards: string[]; shape?: Shape; confirmFoul?: boolean }
   | { type: 'pass'; awaitId: number }
   | { type: 'respond'; awaitId: number; cards: string[] | null }
-  | { type: 'exchangeGive'; awaitId: number; cards: string[] };
+  | { type: 'exchangeGive'; awaitId: number; cards: string[] }
+  /** 7渡し・10捨てで選ぶ（その2）。空の配列 = 渡さない・捨てない。 */
+  | { type: 'choose'; awaitId: number; cards: string[] };
 
 /**
  * 試合の識別子（`state.matchId`）。試合に対する操作には必ず付ける（decisions §14.15）。
@@ -95,6 +110,7 @@ export type SeatInfo = {
 };
 
 export type RoomConfigView = {
+  mode: GameMode;
   rules: RuleId[];
   gameCount: GameCount;
 };
@@ -178,6 +194,7 @@ export type CloseCode =
   | 4002 // 入れる席がない・途中参加できない
   | 4003 // ルームが閉じられた
   | 4004; // 接続が多すぎる
+// 保存の形式が古いルーム（サーバーの更新をまたいだルーム）は、失効と同じく 4003 で閉じる（design-2 §3.3）。
 
 /** POST /api/rooms の応答。 */
 export type CreateRoomResponse = { roomId: string };

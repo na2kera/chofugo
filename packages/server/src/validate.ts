@@ -1,8 +1,8 @@
 // 受け取ったメッセージの検査（design §4.5）。形・長さ・値の範囲をすべて確かめ、知らないキーも拒否する。
 // 例外は投げない。
 
-import { DAIFUGO_MODE_RULE_IDS, cardOf, type GameCount, type RuleId } from '@chofugo/engine';
-import type { ClientAction, ClientMessage } from './protocol.ts';
+import { ALL_RULE_IDS, cardOf, type GameCount, type RuleId } from '@chofugo/engine';
+import type { ClientAction, ClientMessage, GameMode } from './protocol.ts';
 
 /** 受け付けるメッセージの最大の長さ（文字数。UTF-16 の単位）。54枚の ID を並べても 1KB 程度。 */
 export const MAX_MESSAGE_LENGTH = 4096;
@@ -65,12 +65,21 @@ function isGameCount(v: unknown): v is GameCount {
   return v === 5 || v === 10 || v === null;
 }
 
+function isGameMode(v: unknown): v is GameMode {
+  return v === 'daifugo' || v === 'custom';
+}
+
+/**
+ * ルール ID の列の形を確かめる（知っている ID、重複なし）。モードで選べるかどうかと前提は見ない
+ * （それは形が正しい値の中身として、room.ts が直す。design-2 §3.1、§6.5）。
+ */
 function parseRules(v: unknown): RuleId[] | null {
-  if (!Array.isArray(v) || v.length > DAIFUGO_MODE_RULE_IDS.length) return null;
+  if (!Array.isArray(v) || v.length > ALL_RULE_IDS.length) return null;
   const out: RuleId[] = [];
+  // 穴のある配列（new Array(1)）は for...of で undefined になり、下の検査で落ちる
   for (const r of v) {
     if (typeof r !== 'string') return null;
-    const id = DAIFUGO_MODE_RULE_IDS.find((x) => x === r);
+    const id = ALL_RULE_IDS.find((x) => x === r);
     if (id === undefined || out.includes(id)) return null;
     out.push(id);
   }
@@ -105,9 +114,13 @@ function parseAction(v: unknown): ClientAction | null {
       return { type: 'respond', awaitId: v['awaitId'], cards: cards.slice() };
     }
     case 'exchangeGive':
+    case 'choose': {
+      // choose の検査は exchangeGive と同じ（design-2 §3.2）
+      const type = v['type'];
       if (!onlyKeys(v, ['type', 'awaitId', 'cards']) || !isAwaitId(v['awaitId'])) return null;
       if (!isCardIds(v['cards'], 0, 54)) return null;
-      return { type: 'exchangeGive', awaitId: v['awaitId'], cards: v['cards'].slice() };
+      return { type, awaitId: v['awaitId'], cards: v['cards'].slice() };
+    }
     default:
       return null;
   }
@@ -144,12 +157,14 @@ export function parseClientMessage(raw: string | ArrayBuffer): ParseResult {
       return withReq({ type: 'hello', token, name });
     }
     case 'setConfig': {
-      if (!onlyKeys(v, ['type', 'rules', 'gameCount', 'reqId'])) return bad('unknown keys in setConfig');
+      if (!onlyKeys(v, ['type', 'mode', 'rules', 'gameCount', 'reqId'])) return bad('unknown keys in setConfig');
+      const mode = v['mode'];
+      if (!isGameMode(mode)) return bad('mode must be "daifugo" or "custom"');
       const rules = parseRules(v['rules']);
-      if (rules === null) return bad('rules must be a list of distinct daifugo-mode rule ids');
+      if (rules === null) return bad('rules must be a list of distinct rule ids');
       const gc = v['gameCount'];
       if (!isGameCount(gc)) return bad('gameCount must be 5, 10 or null');
-      return withReq({ type: 'setConfig', rules, gameCount: gc });
+      return withReq({ type: 'setConfig', mode, rules, gameCount: gc });
     }
     case 'action': {
       if (!onlyKeys(v, ['type', 'matchId', 'action', 'reqId'])) return bad('unknown keys in action');
