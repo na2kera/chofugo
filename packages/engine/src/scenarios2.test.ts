@@ -190,3 +190,25 @@ describe('16種の組み合わせで、でたらめな対戦の途中に不正�
     expect(choiceSeen).toBeGreaterThan(0);
   }, 60_000);
 });
+
+describe('choose に壊れた入力を送っても例外を投げない', () => {
+  it('選択の待ちの間', () => {
+    const d = new Driver(scene({ rules: ['give_on_7'], hands: ['S7 H7 H5 H6', 'S9 C3', 'D9', 'C9'], turn: 0 }));
+    d.play(0, 'S7 H7');
+    const w = d.current();
+    const before = JSON.stringify(d.state);
+    const garbage: unknown[] = [null, 0, 'x', {}, [null], [{ toString: null }], Array.from({ length: 1000 }, () => 'spade-5'), [1, 2]];
+    for (const g of garbage) {
+      for (const a of [
+        { type: 'choose', seat: 0, awaitId: w.id, cards: g },
+        { type: 'choose', seat: g, awaitId: w.id, cards: [] },
+        { type: 'choose', seat: 0, awaitId: g, cards: [] },
+      ]) {
+        expect(() => applyAction(d.state, a as never)).not.toThrow();
+      }
+      // 席0・番号どおりでも、カードが壊れていれば拒否する（0 は席としては正しいので、カードの値だけを確かめる）
+      expect(applyAction(d.state, { type: 'choose', seat: 0, awaitId: w.id, cards: g } as never).ok).toBe(false);
+    }
+    expect(JSON.stringify(d.state)).toBe(before);
+  });
+});
