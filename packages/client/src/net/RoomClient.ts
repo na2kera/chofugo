@@ -257,7 +257,9 @@ export class RoomClient {
     const before = this.snap.feed.matchId === msg.matchId ? this.snap.feed.top : null;
     const { feed, fresh } = ingest(this.snap.feed, msg);
     patch.feed = feed;
-    if (msg.matchId !== null && fresh.some((e) => e.type === 'matchEnd')) {
+    // 最後のゲームから出来事を通じて試合の結果へ進んだときだけ、先にゲームの結果を見せる（§7.3）。
+    // 無制限の試合をゲームの結果の画面から終えたときは、ゲームの結果はもう見ているので、そのまま試合の結果へ。
+    if (msg.matchId !== null && fresh.some((e) => e.type === 'matchEnd') && fresh.some((e) => e.type === 'gameEnd')) {
       const s = new Set(this.snap.gameResultFirst);
       s.add(msg.matchId);
       patch.gameResultFirst = s;
