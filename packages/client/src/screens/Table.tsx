@@ -215,10 +215,14 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
       return;
     }
     setStealS({ key, value: null });
-    setPanelS({ key, value: panel === id ? null : id });
+    const next = panel === id ? null : id;
+    setPanelS({ key, value: next });
     if (step.kind !== 'none') setStepS({ key, value: NO_STEP });
+    // 強奪の枠を開くときと閉じるときは、ふつうの選択を空にする（design-3 §6.3）
+    if (next === 'steal' || panel === 'steal') setSel({ key, value: EMPTY });
   };
   const closePanel = () => {
+    if (panel === 'steal') setSel({ key, value: EMPTY });
     setPanelS({ key, value: null });
     setStealS({ key, value: null });
   };
