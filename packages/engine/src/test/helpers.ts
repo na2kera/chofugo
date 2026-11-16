@@ -131,6 +131,13 @@ export class Driver {
     expect(w.kind).toBe('respond');
     return this.apply({ type: 'respond', seat, awaitId: w.id, cards: shorts === null ? null : cs(shorts) });
   }
+  /** 7渡し・10捨てで選ぶ（空文字 = 渡さない・捨てない）。 */
+  choose(seat: SeatId, shorts: string) {
+    const w = this.current();
+    expect(w.seat).toBe(seat);
+    expect(w.kind).toBe('choice');
+    return this.apply({ type: 'choose', seat, awaitId: w.id, cards: cs(shorts) });
+  }
   places() {
     return viewFor(this.state, 0).game?.places;
   }
@@ -248,7 +255,8 @@ export function randomAction(s: MatchState, rng: RngState): Action {
   return { type: 'exchangeGive', seat: w.seat, awaitId: w.id, cards };
 }
 
-export type RunStats = { actions: number; games: number; events: GameEvent[] | null; types: Set<string> };
+/** awaitKinds: 待ちの種類（respond はルール付きで 'respond:ルール'）。 */
+export type RunStats = { actions: number; games: number; events: GameEvent[] | null; types: Set<string>; awaitKinds: Set<string> };
 
 /** 試合を最後まで回す。maxGames で途中のゲームまでに絞れる。 */
 export function runMatch(
@@ -261,12 +269,22 @@ export function runMatch(
   if (!created.ok) throw new Error(created.error.message);
   let s = created.state;
   const rng = rngFromSeed([seed[3] ^ 0x9e3779b9, seed[2] ^ 0x85ebca6b, seed[1] ^ 0xc2b2ae35, seed[0] ^ 0x27d4eb2f].map((x) => x >>> 0) as [number, number, number, number]);
-  const stats: RunStats = { actions: 0, games: 1, events: opts.keepEvents ? created.events.slice() : null, types: new Set() };
+  const stats: RunStats = {
+    actions: 0,
+    games: 1,
+    events: opts.keepEvents ? created.events.slice() : null,
+    types: new Set(),
+    awaitKinds: new Set(),
+  };
   for (const e of created.events) stats.types.add(e.type);
   const max = opts.maxActions ?? 4000;
   for (;;) {
     if (opts.check !== false) checkInvariants(s);
     if (s.phase === 'matchResult') break;
+    for (const w of awaiting(s)) {
+      const p = s.game?.pending ?? null;
+      stats.awaitKinds.add(w.kind === 'respond' && p !== null ? `respond:${p.rule}` : w.kind);
+    }
     let action: Action;
     if (s.phase === 'gameResult') {
       if (config.gameCount === null && s.gameNo >= (opts.endUnlimitedAfter ?? 3)) action = { type: 'endMatch' };

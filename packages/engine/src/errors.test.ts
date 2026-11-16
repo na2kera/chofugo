@@ -70,7 +70,7 @@ describe('不正な操作', () => {
   it('でたらめな対戦の途中に不正な操作を混ぜても、常に拒否され状態は変わらない', () => {
     const rng = rngFromSeed([42, 42, 42, 42]);
     for (let m = 0; m < 12; m++) {
-      // 定番8種から選ぶ（その1と同じ。16種の組み合わせは rules2.test.ts の不正な操作のテストで確かめる。design-2 §6.4）
+      // 定番8種から選ぶ（その1と同じ。16種の組み合わせは scenarios2.test.ts の不正な操作のテストで確かめる。design-2 §6.4）
       const rules = DAIFUGO_MODE_RULE_IDS.filter(() => nextInt(rng, 2) === 1) as RuleId[];
       const created = createMatch(cfg(rules, 5), [m + 1, 9, 9, 9]);
       if (!created.ok) throw new Error();

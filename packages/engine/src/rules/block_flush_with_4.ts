@@ -1,7 +1,7 @@
 // 4止め（decisions §6.2、§14.7、§16.2、design-2 §2.4）。
 // 8切りが起きたとき、返しの一周で本物の4の2枚を出すと8切りを止める。4の2枚は捨て札に置き、8は場に残る。
 
-import { cardOf, type CardId } from '../cards.ts';
+import { cardOf, sortCardIds, type CardId } from '../cards.ts';
 import type { Play } from '../types.ts';
 import { isEightGroup } from './flush_on_8.ts';
 import type { RuleCtx, RuleModule } from './types.ts';
@@ -36,7 +36,7 @@ export const blockFlushWith4: RuleModule = {
   returnToDiscard: true,
   returnOptions(ctx, seat) {
     // 手札の本物の4から2枚を選ぶ組み合わせすべて。ジョーカーは使えない
-    const fours = (ctx.game.hands[seat] ?? []).filter(isRealFour);
+    const fours = sortCardIds((ctx.game.hands[seat] ?? []).filter(isRealFour));
     const out: Play[] = [];
     for (let i = 0; i < fours.length; i++) {
       for (let k = i + 1; k < fours.length; k++) {
