@@ -9,7 +9,7 @@
     "dev": "wrangler dev",
     "types": "wrangler types",
     "typecheck": "wrangler types && tsc -p tsconfig.json",
-    "test": "node --experimental-websocket test/run.mjs"
+    "test": "vitest run"
   },
   "devDependencies": {
     "typescript": "7.0.2",

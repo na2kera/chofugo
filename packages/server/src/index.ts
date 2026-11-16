@@ -6,6 +6,7 @@
 // テストのときだけ（開発サーバーに --var CHOFUGO_TEST_MODE:1 を渡したとき）:
 //   POST /api/rooms の本文に { "timing": { ... } } を付けて秒数を差し替えられる
 //   POST /api/rooms/:id/test/alarm でアラームの処理をいま実行する（2回鳴った場合の確認）
+//   POST /api/rooms/:id/test/replay で操作の記録から試合を再現し、保存された状態と一致するかを返す
 
 import { DEFAULT_TIMING, parseTimingOverride, type Timing } from './timing.ts';
 import type { CreateRoomResponse } from './protocol.ts';
@@ -84,7 +85,7 @@ export default {
         if (!originAllowed(request, url)) return json({ error: 'forbidden origin' }, 403);
         return await createRoom(request, env);
       }
-      const m = /^\/api\/rooms\/([^/]+)\/(ws|test\/alarm)$/.exec(path);
+      const m = /^\/api\/rooms\/([^/]+)\/(ws|test\/alarm|test\/replay)$/.exec(path);
       if (m !== null) {
         const roomId = m[1] ?? '';
         if (!ROOM_ID_RE.test(roomId)) return json({ error: 'room not found' }, 404);
@@ -96,6 +97,7 @@ export default {
           return await stub.fetch(request);
         }
         if (!isTestMode(env) || request.method !== 'POST') return json({ error: 'not found' }, 404);
+        if (m[2] === 'test/replay') return json(await stub.replayCheck());
         const version = await stub.runAlarmNow();
         return json({ version });
       }

@@ -195,6 +195,28 @@ export class Room extends DurableObject<Env> {
     return this.load()?.version ?? null;
   }
 
+  /**
+   * テスト用：保存した設定・種・操作の記録から試合を作り直し、保存されている試合の状態と一致するかを返す（design §8.2「操作の記録」）。
+   */
+  async replayCheck(): Promise<{ ok: boolean; actions: number; reason?: string }> {
+    const s = this.load();
+    if (s === null || s.match === null || s.matchInit === null) return { ok: false, actions: 0, reason: 'no match' };
+    const created = createMatch(s.matchInit.config, s.matchInit.seed);
+    if (!created.ok) return { ok: false, actions: 0, reason: 'createMatch failed' };
+    let state = created.state;
+    let count = 0;
+    for (let gameNo = 1; gameNo <= s.match.gameNo; gameNo++) {
+      for (const entry of this.ctx.storage.kv.get<LoggedAction[]>(`${ACTIONS_PREFIX}${gameNo}`) ?? []) {
+        const r = applyAction(state, entry.action);
+        if (!r.ok) return { ok: false, actions: count, reason: `action ${count} rejected: ${r.error.code}` };
+        state = r.state;
+        count++;
+      }
+    }
+    const same = JSON.stringify(state) === JSON.stringify(s.match);
+    return same ? { ok: true, actions: count } : { ok: false, actions: count, reason: 'state differs' };
+  }
+
   // ---------- 接続 ----------
 
   override async fetch(request: Request): Promise<Response> {
