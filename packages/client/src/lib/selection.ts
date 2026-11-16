@@ -75,13 +75,14 @@ export function afterShapeChosen(play: LegalPlay): PlayStep {
   return play.foul ? { kind: 'confirmFoul', play } : { kind: 'send', play };
 }
 
-export type DimReason = 'notYourTurn' | 'suitLock' | 'seqLock' | 'opening' | 'cannotCombine' | 'weaker';
+export type DimReason = 'notYourTurn' | 'suitLock' | 'seqLock' | 'opening' | 'ban' | 'cannotCombine' | 'weaker';
 
 export const DIM_REASON_TEXT: Record<DimReason, string> = {
   notYourTurn: 'いまは自分の番ではない',
   suitLock: '縛りのマークに合わない',
   seqLock: '激縛りの続きに合わない',
   opening: '最初の1手にはダイヤの3が必要',
+  ban: '独裁で封じられている',
   cannotCombine: '選んだカードと組み合わせられない',
   weaker: '場のカードより弱いか、枚数・種類が合わない',
 };
@@ -91,6 +92,7 @@ export const DIM_REASON_TEXT: Record<DimReason, string> = {
  * - 自分の待ちがない → 自分の番ではない
  * - 何か選んでいて、そのカード単独なら出せる手に含まれる → 組み合わせられない
  * - 手番で、ダイヤの3の義務がある → 最初の1手にはダイヤの3が必要（design-2 §4.5）
+ * - 独裁で封じられた数字のカード → 独裁で封じられている（design-3 §4.4。返しの一周でも同じ）
  * - 手番で、激縛りが発動している → 激縛りの続きに合わない（design-2 §4.5）
  * - 縛りがあり、そのカードのマークが縛りのマークにない → 縛りに合わない
  * - それ以外 → 弱いか、枚数・種類が合わない
@@ -102,13 +104,14 @@ export function dimReason(
   selected: readonly CardId[],
   card: CardId,
   suitLock: readonly Suit[] | null,
-  extra: { seqLock?: { suits: Suit[]; rank: Rank } | null; openingCard?: CardId | null } = {},
+  extra: { seqLock?: { suits: Suit[]; rank: Rank } | null; openingCard?: CardId | null; ban?: Rank | null } = {},
 ): DimReason {
-  if (mine === null || mine.kind === 'exchangeGive' || mine.kind === 'choice') return 'notYourTurn';
+  if (mine === null || mine.kind === 'exchangeGive' || mine.kind === 'choice' || mine.kind === 'abilitySelect') return 'notYourTurn';
   if (selected.length > 0 && plays.some((p) => p.cards.includes(card))) return 'cannotCombine';
   if (mine.kind === 'turn' && (extra.openingCard ?? null) !== null && card !== extra.openingCard) return 'opening';
-  if (mine.kind === 'turn' && (extra.seqLock ?? null) !== null) return 'seqLock';
   const f = faceOf(card);
+  if ((extra.ban ?? null) !== null && f !== null && f.kind === 'normal' && f.rank === extra.ban) return 'ban';
+  if (mine.kind === 'turn' && (extra.seqLock ?? null) !== null) return 'seqLock';
   // 4止めの返しは縛りを無視するので、縛りを理由にしない
   if (mine.kind === 'respond' && mine.rule === 'block_flush_with_4') return 'weaker';
   if (suitLock !== null && f !== null && f.kind === 'normal' && !suitLock.includes(f.suit)) return 'suitLock';

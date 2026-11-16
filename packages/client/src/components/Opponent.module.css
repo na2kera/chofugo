@@ -64,3 +64,24 @@
 @media (prefers-reduced-motion: reduce) {
   .flash { animation: none; }
 }
+
+/* 特権の残りの札（design-3 §4.4）。階級の札と横に並べると幅 360px で入らないので、枚数の下に1行足す（持ち主の枠だけ） */
+.plateRow2 {
+  height: 20px;
+  margin-top: 4px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+/* 透視で見たカード（持ち主の画面だけ）。カード単位で折り返す（design-3 §6.7） */
+.peek {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 2px 8px;
+  margin: 4px 2px 0;
+  line-height: 16px;
+}
+.peek > span {
+  white-space: nowrap;
+}

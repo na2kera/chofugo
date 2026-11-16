@@ -173,3 +173,10 @@
   place-items: center;
   color: var(--muted);
 }
+
+/* 超富豪モードの1行（design-3 §4.1）。ルールの一覧の上 */
+.modeNote {
+  margin: 4px 0 0;
+  line-height: 28px;
+  color: var(--gold-hi);
+}

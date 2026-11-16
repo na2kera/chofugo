@@ -4,7 +4,7 @@
 //
 //   node scripts/bots.mjs [--base http://localhost:5173] [--room <ルームID>] [--count 3]
 //                         [--delay 400] [--games 5|10|0] [--start-when 4] [--rematch] [--quiet]
-//                         [--mode daifugo|custom] [--rules all|<ID,ID,...>]
+//                         [--mode daifugo|custom|chofugo] [--rules all|<ID,ID,...>] [--passive]
 //
 //   --room がなければルームを作って URL を表示する。
 //   ボットがホストになったら、人が --start-when 人（初期値 4）そろった時点で試合を始め（残りの空席は CPU になる）、
@@ -12,6 +12,10 @@
 //   --mode / --rules はボットがホストのときに設定する（--rules all はそのモードで選べるルールすべて）。
 //   設定はサーバーが直す（モードで選べないルール・前提のないルールは外れる）。指定がなければルームの設定のまま。
 //   7渡し・10捨ての選択（choice）では、手札からでたらめに 0〜上限枚を選ぶ。
+//   超富豪モード（--mode chofugo。ルールは16種で固定）：特権の選択では 0〜枠の数をでたらめに選んで確定し、
+//   手番では時々（3割）使える特権をでたらめな相手・カード・数字で使い、スキップを付けられる手には時々付ける。
+//   --passive：親でないときは必ずパスし、特権も使わない（選択では何も選ばずに確定する）。親のときは出せる手からでたらめに1手。
+//   返しの一周はスキップ、7渡し・10捨ては選ばない。ブラウザの席（や CPU）を1位にして、特権の画面を確かめるため。
 
 const args = process.argv.slice(2);
 function opt(name, def) {
@@ -30,6 +34,7 @@ const QUIET = opt('quiet', false) === true;
 const START_WHEN = Number(opt('start-when', 4));
 const MODE = opt('mode', null);
 const RULES = opt('rules', null);
+const PASSIVE = opt('passive', false) === true;
 
 // engine の ALL_RULE_IDS と DAIFUGO_MODE_RULE_IDS（このスクリプトは engine を読み込まないので写しを持つ）
 const ALL_RULES = [
@@ -37,14 +42,18 @@ const ALL_RULES = [
   'forbidden_finish', 'dethrone', 'diamond3_start', 'triple3_trump', 'give_on_7', 'reverse_order_on_9', 'discard_on_10', 'skip_on_k',
 ];
 const DAIFUGO_RULES = ['flush_on_8', 'revolution', 'temp_reverse_on_j', 'spade3_beats_joker', 'suit_lock', 'runs', 'forbidden_finish', 'dethrone'];
-if (MODE !== null && MODE !== 'daifugo' && MODE !== 'custom') throw new Error('--mode は daifugo か custom');
+if (MODE !== null && MODE !== 'daifugo' && MODE !== 'custom' && MODE !== 'chofugo') throw new Error('--mode は daifugo・custom・chofugo のどれか');
+// engine の ALL_ABILITY_IDS（その3）
+const ALL_ABILITIES = ['peek', 'steal', 'forceFlush', 'ban', 'revolution', 'skip'];
 
 /** ホストのときに送る設定（指定がなければいまの設定）。 */
 function wantedConfig(cur, gameCount) {
   const mode = MODE ?? cur.mode;
   let rules = cur.rules;
-  if (RULES === 'all') rules = mode === 'custom' ? ALL_RULES : DAIFUGO_RULES;
+  if (RULES === 'all') rules = mode === 'daifugo' ? DAIFUGO_RULES : ALL_RULES;
   else if (typeof RULES === 'string') rules = RULES.split(',').map((x) => x.trim()).filter(Boolean);
+  // 超富豪モードはサーバーが16種に直す（送ったルールは使われない）
+  if (mode === 'chofugo') rules = ALL_RULES;
   return { type: 'setConfig', mode, rules, gameCount };
 }
 
@@ -63,8 +72,51 @@ function pick(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
+/** 受け身（--passive）：親でないときは必ずパス。特権は使わない。親のときは出せる手からでたらめに1手。 */
+function passiveAction(mine, hand) {
+  switch (mine.kind) {
+    case 'turn': {
+      if (mine.canPass) return { type: 'pass', awaitId: mine.awaitId };
+      const p = pick(mine.plays);
+      const a = { type: 'play', awaitId: mine.awaitId, cards: p.cards, shape: p.shape };
+      if (p.foul) a.confirmFoul = true;
+      return a;
+    }
+    case 'abilitySelect':
+      return { type: 'selectAbilities', awaitId: mine.awaitId, abilities: [], confirm: true };
+    case 'respond':
+      return { type: 'respond', awaitId: mine.awaitId, cards: null };
+    case 'choice':
+      return { type: 'choose', awaitId: mine.awaitId, cards: [] };
+    default:
+      return chooseAction(mine, hand);
+  }
+}
+
+/** 特権の選択：0〜枠の数をでたらめに選んで確定する。 */
+function chooseAbilities(mine) {
+  const pool = ALL_ABILITIES.slice();
+  const n = Math.floor(Math.random() * (mine.slots + 1));
+  const abilities = [];
+  while (abilities.length < n) abilities.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+  return { type: 'selectAbilities', awaitId: mine.awaitId, abilities, confirm: true };
+}
+
+/** 使える特権からでたらめに1つ（相手・カード・数字もでたらめ）。なければ null。 */
+function chooseAbilityUse(mine) {
+  const usable = (mine.abilities ?? []).filter((x) => x.usable);
+  if (usable.length === 0) return null;
+  const u = pick(usable);
+  const a = { type: 'useAbility', awaitId: mine.awaitId, ability: u.id };
+  if (u.targets) a.target = pick(u.targets);
+  if (u.cards) a.card = pick(u.cards);
+  if (u.ranks) a.rank = pick(u.ranks);
+  return a;
+}
+
 /** 出せる手からでたらめに選ぶ。親は出せる手があればパスできない（server/test/helpers.mjs と同じ考え方）。 */
 function chooseAction(mine, hand) {
+  if (mine.kind === 'abilitySelect') return chooseAbilities(mine);
   if (mine.kind === 'choice') {
     // 7渡し・10捨て：手札からでたらめに 0〜max 枚
     const pool = hand.slice();
@@ -74,18 +126,24 @@ function chooseAction(mine, hand) {
     return { type: 'choose', awaitId: mine.awaitId, cards };
   }
   if (mine.kind === 'turn') {
+    if (Math.random() < 0.3) {
+      const use = chooseAbilityUse(mine);
+      if (use !== null) return use;
+    }
     const plays = mine.plays;
     if (mine.canPass && (plays.length === 0 || Math.random() < 0.3)) return { type: 'pass', awaitId: mine.awaitId };
     const nonFoul = plays.filter((p) => !p.foul);
     const p = nonFoul.length > 0 && Math.random() < 0.9 ? pick(nonFoul) : pick(plays);
     const a = { type: 'play', awaitId: mine.awaitId, cards: p.cards, shape: p.shape };
     if (p.foul) a.confirmFoul = true;
+    if (p.canSkip && Math.random() < 0.5) a.withSkip = true;
     return a;
   }
   if (mine.kind === 'respond') {
     if (mine.plays.length > 0 && Math.random() < 0.7) return { type: 'respond', awaitId: mine.awaitId, cards: pick(mine.plays).cards };
     return { type: 'respond', awaitId: mine.awaitId, cards: null };
   }
+  if (mine.kind !== 'exchangeGive') throw new Error(`知らない待ちの種類: ${mine.kind}`);
   if (mine.role === 'lower') {
     const pool = mine.candidates.filter((c) => !mine.forced.includes(c));
     const chosen = [];
@@ -155,13 +213,23 @@ class Bot {
     if (!s.eventsFull) {
       this.stats ??= {};
       for (const e of s.events) {
-        const k = e.type === 'fieldCleared' ? `fieldCleared:${e.reason}` : e.type === 'respond' && e.toDiscard ? 'respond:4止め' : e.type;
-        if (['seqLock', 'orderReverse', 'choiceStart', 'give', 'discard', 'choiceSkip', 'skipped', 'respond:4止め', 'fieldCleared:triple3_trump', 'respond'].includes(k)) this.stats[k] = (this.stats[k] ?? 0) + 1;
+        const k =
+          e.type === 'fieldCleared' ? `fieldCleared:${e.reason}` : e.type === 'respond' && e.toDiscard ? 'respond:4止め' : e.type === 'ability' ? `ability:${e.ability}` : e.type;
+        if (
+          ['seqLock', 'orderReverse', 'choiceStart', 'give', 'discard', 'choiceSkip', 'skipped', 'respond:4止め', 'fieldCleared:triple3_trump', 'respond', 'abilitySelectStart', 'abilitiesChosen'].includes(k) ||
+          k.startsWith('ability:')
+        )
+          this.stats[k] = (this.stats[k] ?? 0) + 1;
+        // その3：誰が特権を選び・使ったか（CPU の大富豪の確認用。ホストのボットだけが表示する）
+        if (s.isHost && (e.type === 'abilitiesChosen' || e.type === 'ability')) log(`${this.name}: 第${e.gameNo}ゲーム ${s.room.seats[e.seat].name} ${e.type === 'ability' ? `特権 ${e.ability}` : `特権を${e.count}個 選んだ`}`);
       }
     }
     if (s.matchPhase !== prevPhase) log(`${this.name}: ${s.matchPhase ?? 'lobby'}${s.view ? ` 第${s.view.gameNo}ゲーム` : ''}`);
     const mine = s.view?.mine;
-    if (mine) this.once(`${s.matchId}:a${mine.awaitId}`, () => this.send({ type: 'action', matchId: s.matchId, action: chooseAction(mine, s.view.game?.hand ?? []) }));
+    if (mine) {
+      const decide = PASSIVE ? passiveAction : chooseAction;
+      this.once(`${s.matchId}:a${mine.awaitId}`, () => this.send({ type: 'action', matchId: s.matchId, action: decide(mine, s.view.game?.hand ?? []) }));
+    }
     if (!s.isHost) {
       if (s.matchPhase === 'matchResult' && !REMATCH) this.finish(s);
       return;

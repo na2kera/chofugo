@@ -1,5 +1,6 @@
 // ロビー（design-client §4.3、design-2 §4.1）。ホストだけが設定を操作できる。ホスト以外には同じ表示を操作できない形で見せる。
-// ルールの枠のいちばん上にモードの切り替え（大富豪・カスタム）。カスタムは「定番」8種と「応用」8種を同じ2列で並べる。
+// ルールの枠のいちばん上にモードの切り替え（大富豪・カスタム・超富豪）。カスタムは「定番」8種と「応用」8種を同じ2列で並べる。
+// 超富豪（design-3 §4.1）は16種すべて ON で固定。操作できない形で見せ、その上に1行「前の大富豪が 特権を使える」。
 // 設定は送るだけで、正しい形に直すのはサーバー（モードで選べないルール・前提のないルールは外れて届く）。
 
 import { Fragment, useState } from 'react';
@@ -17,6 +18,7 @@ import s from './Lobby.module.css';
 const MODES: { value: GameMode; label: string }[] = [
   { value: 'daifugo', label: '大富豪' },
   { value: 'custom', label: 'カスタム' },
+  { value: 'chofugo', label: '超富豪' },
 ];
 
 /** 前提のルールが OFF なので押せない（4止めは8切りが前提）。 */
@@ -54,6 +56,8 @@ export function Lobby({ state, snap, api, initialOpen }: ScreenProps & { initial
     setConfig(mode, on ? cfg.rules.filter((r) => r !== id) : [...cfg.rules, id], cfg.gameCount);
   };
 
+  // 超富豪モードのルールは固定（ホストでも操作できない形で見せる）
+  const editable = host && mode !== 'chofugo';
   const ruleGrid = (order: readonly RuleId[]) => (
     <div className={s.rules}>
       {pairsOf(order).map((pair, i) => (
@@ -81,7 +85,7 @@ export function Lobby({ state, snap, api, initialOpen }: ScreenProps & { initial
                     t.name
                   )}
                 </button>
-                {host ? (
+                {editable ? (
                   <button
                     type="button"
                     className={s.swBtn}
@@ -147,7 +151,7 @@ export function Lobby({ state, snap, api, initialOpen }: ScreenProps & { initial
       <section className={`f win ${s.box}`}>
         <div className={s.hrow}>
           <h2 className={s.h}>ルール</h2>
-          {host &&
+          {editable &&
             (mode === 'custom' ? (
               <button type="button" className={s.reset} disabled={!canAct} onClick={() => setConfig(mode, CUSTOM_MODE_RULE_IDS, cfg.gameCount)}>
                 全部 ON
@@ -158,7 +162,7 @@ export function Lobby({ state, snap, api, initialOpen }: ScreenProps & { initial
               </button>
             ))}
         </div>
-        <div className={`${s.seg} ${s.seg2} ${s.modes}`} role="radiogroup" aria-label="モード">
+        <div className={`${s.seg} ${s.modes}`} role="radiogroup" aria-label="モード">
           {MODES.map((m) => {
             const on = mode === m.value;
             const face = <span className={`f ${on ? 'plate' : 'plate2'} ${s.segFace}`}>{m.label}</span>;
@@ -173,7 +177,8 @@ export function Lobby({ state, snap, api, initialOpen }: ScreenProps & { initial
             );
           })}
         </div>
-        {mode === 'custom' ? (
+        {mode === 'chofugo' && <p className={s.modeNote}>前の大富豪が 特権を使える</p>}
+        {mode === 'custom' || mode === 'chofugo' ? (
           <>
             <h3 className={s.sub}>定番</h3>
             {ruleGrid(LOBBY_RULE_ORDER)}

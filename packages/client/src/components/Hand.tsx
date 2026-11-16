@@ -11,6 +11,8 @@ type Props = {
   cards: readonly CardId[];
   lookOf: (id: CardId) => CardLook;
   receivedOf?: (id: CardId) => boolean;
+  /** 透視で見られたカード（design-3 §4.4）。 */
+  peekedOf?: (id: CardId) => boolean;
   onPress?: (id: CardId) => void;
   /** 固定の幅（見本ページ用）。 */
 };
@@ -18,7 +20,7 @@ type Props = {
 /** 上にずれる分と、受け取った印の分の余白。 */
 const TOP_ROOM = 24;
 
-export function Hand({ cards, lookOf, receivedOf, onPress }: Props) {
+export function Hand({ cards, lookOf, receivedOf, peekedOf, onPress }: Props) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const lay = handLayout(cards.length, width);
   return (
@@ -34,6 +36,7 @@ export function Hand({ cards, lookOf, receivedOf, onPress }: Props) {
               id={id}
               look={look}
               received={receivedOf?.(id) ?? false}
+              peeked={peekedOf?.(id) ?? false}
               {...(onPress ? { onPress: () => onPress(id) } : {})}
               {...(label !== undefined ? { extraLabel: label } : {})}
               className={s.pos}

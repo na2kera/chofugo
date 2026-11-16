@@ -16,6 +16,8 @@ type Props = {
   look?: CardLook;
   /** 受け取ったカードの印（交換）。 */
   received?: boolean;
+  /** 透視で見られたカードの印（上の端の赤い線、design-3 §4.4）。 */
+  peeked?: boolean;
   /** 押せるカード（手札）。 */
   onPress?: () => void;
   /** 読み上げに足す言葉（「選択中」など）。 */
@@ -52,7 +54,7 @@ export function CardFaceArt({ id }: { id: CardId }) {
   );
 }
 
-export function Card({ id, large = false, look = 'normal', received = false, onPress, extraLabel, className, style }: Props) {
+export function Card({ id, large = false, look = 'normal', received = false, peeked = false, onPress, extraLabel, className, style }: Props) {
   const f = faceOf(id);
   const color = f === null ? '' : f.kind === 'joker' ? s.joker : isRedSuit(f.suit) ? s.red : s.black;
   const cls = [
@@ -64,9 +66,10 @@ export function Card({ id, large = false, look = 'normal', received = false, onP
     look === 'dim' ? s.dim : '',
     look === 'sel' ? s.sel : '',
     onPress ? s.button : '',
+    peeked ? s.peeked : '',
     className ?? '',
   ].join(' ');
-  const extra = [received ? '受け取ったカード' : null, extraLabel].filter(Boolean).join('、');
+  const extra = [received ? '受け取ったカード' : null, peeked ? '透視で見られた' : null, extraLabel].filter(Boolean).join('、');
   const label = extra ? `${cardLabel(id)}、${extra}` : cardLabel(id);
   const inner = <CardFaceArt id={id} />;
   if (onPress) {

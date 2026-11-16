@@ -1,11 +1,12 @@
 // 見本ページ（開発のときだけ）。固定のデータで各画面を描く。/dev/gallery?s=<場面>
 // 画像で確かめるために使う（design-client §6、§7.12）。
 
-import type { CardId, SeatId } from '@chofugo/engine';
+import type { AbilityId, CardId, SeatId, UsableAbility } from '@chofugo/engine';
 import { ALL_RULE_IDS, DAIFUGO_MODE_DEFAULT_RULES, type RuleId } from '@chofugo/engine';
 import type { GameMode, StateMessage } from '@chofugo/server/protocol';
 import type { Anim, Feed } from '../lib/events.ts';
 import type { PlayStep } from '../lib/selection.ts';
+import type { AbilityPanel } from '../lib/abilities.ts';
 import type { Snapshot } from '../net/RoomClient.ts';
 import { GameResult, MatchResult } from '../screens/Results.tsx';
 import { Lobby } from '../screens/Lobby.tsx';
@@ -389,6 +390,150 @@ function lobby(host: boolean, names?: [string, string, string, string]): StateMe
 
 const NAMES12: [string, string, string, string] = ['ながいなまえのひとです１２', 'ABCDEFGHIJKL', 'じゅうにもじのなまえだよ', 'CPU 4'];
 
+// ---------- その3（超富豪モード）の場面 ----------
+
+const ALL16: RuleId[] = [...ALL_RULE_IDS];
+
+/** 特権の選択（選ぶ人）。hand16 なら手札16枚（2段）。 */
+function abilitySelectMine(draft: AbilityId[], slots: number, hand16 = true): StateMessage {
+  const hand = hand16 ? HAND16 : HAND12;
+  return stateMsg({
+    view: playerView({
+      rules: ALL16,
+      phase: 'ability',
+      prevRanks: [1, 3, 2, 4],
+      game: gameView({
+        hand,
+        handCounts: [hand.length, 13, 14, 13],
+        abilities: { holder: 0, slots, remaining: slots, selecting: true },
+        myAbilities: { chosen: [], used: [], draft },
+        myExchange: { gave: ['spade-4', 'club-5'], received: ['spade-15', 'joker-1'] },
+      }),
+      awaiting: [{ id: 80, seat: 0, kind: 'abilitySelect', timer: 'ability' }],
+      mine: { awaitId: 80, kind: 'abilitySelect', slots, draft },
+    }),
+    matchPhase: 'ability',
+    room: { ...lobby(true).room, phase: 'playing', seats: seats(), config: { mode: 'chofugo', rules: ALL16, gameCount: 5 } },
+    deadlines: [deadline(0, 'abilitySelect', 44_000, 80)],
+  });
+}
+
+/** ほかの人が特権を選んでいる。 */
+function abilitySelectOther(names?: [string, string, string, string]): StateMessage {
+  return stateMsg({
+    seat: 0,
+    view: playerView({
+      rules: ALL16,
+      phase: 'ability',
+      prevRanks: [3, 1, 2, 4],
+      game: gameView({ hand: HAND12, handCounts: [12, 14, 14, 14], abilities: { holder: 1, slots: 2, remaining: 2, selecting: true } }),
+      awaiting: [{ id: 81, seat: 1, kind: 'abilitySelect', timer: 'ability' }],
+      mine: null,
+    }),
+    matchPhase: 'ability',
+    room: { ...lobby(true).room, phase: 'playing', seats: seats(names), config: { mode: 'chofugo', rules: ALL16, gameCount: 5 } },
+    deadlines: [deadline(1, 'abilitySelect', 38_000, 81)],
+  });
+}
+
+/** 自分が大富豪の手番。chosen の特権のボタンを並べる。leader なら場は空。 */
+function abilityTurn(opts: {
+  chosen: AbilityId[];
+  used?: AbilityId[];
+  leader?: boolean;
+  hand?: CardId[];
+  names?: [string, string, string, string];
+  openingCard?: CardId | null;
+  peek?: { target: SeatId; cards: CardId[] } | null;
+  ban?: number | null;
+}): StateMessage {
+  const hand = opts.hand ?? HAND12;
+  const used = opts.used ?? [];
+  const leader = opts.leader ?? false;
+  const unused = opts.chosen.filter((x) => !used.includes(x));
+  const abilities: UsableAbility[] = [];
+  for (const id of unused) {
+    if (id === 'peek') abilities.push({ id, usable: true, targets: [1, 2, 3] });
+    if (id === 'steal') abilities.push({ id, usable: true, targets: [1, 2, 3], cards: hand.filter((c) => c !== opts.openingCard) });
+    if (id === 'forceFlush') abilities.push({ id, usable: !leader });
+    if (id === 'ban') {
+      const all = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+      abilities.push({ id, usable: true, ranks: (opts.openingCard === 'diamond-3' ? all.filter((r) => r !== 3) : all) as never });
+    }
+    if (id === 'revolution') abilities.push({ id, usable: true });
+  }
+  const field = leader ? [] : [{ seat: 1 as SeatId, play: group(['club-5', 'diamond-5'], 5), via: 'turn' as const }];
+  const plays = leader
+    ? [legal(group([hand[0]!], 3)), legal(group([hand[1]!], 4))].map((x) => ({ ...x, canSkip: true as const }))
+    : [{ ...legal(group(['spade-6', 'heart-6'], 6)), canSkip: true as const }, { ...legal(group(['spade-7', 'heart-7'], 7)), canSkip: true as const }];
+  return stateMsg({
+    view: playerView({
+      rules: ALL16,
+      gameNo: 3,
+      prevRanks: [1, 3, 2, 4],
+      game: gameView({
+        hand,
+        handCounts: [hand.length, 9, 11, 13],
+        field,
+        lastPlayer: leader ? null : 1,
+        openingCard: opts.openingCard ?? null,
+        abilities: { holder: 0, slots: opts.chosen.length, remaining: unused.length, selecting: false },
+        myAbilities: { chosen: opts.chosen, used, draft: opts.chosen },
+        peek: opts.peek ?? null,
+        ban: (opts.ban ?? null) as never,
+      }),
+      awaiting: [{ id: 90, seat: 0, kind: 'turn', timer: 'turn' }],
+      mine: { awaitId: 90, kind: 'turn', leader, canPass: !leader, plays, abilities, skipAvailable: unused.includes('skip') },
+    }),
+    room: { ...lobby(true).room, phase: 'playing', seats: seats(opts.names), config: { mode: 'chofugo', rules: ALL16, gameCount: 5 } },
+    deadlines: [deadline(0, 'turn', 22_000, 90)],
+  });
+}
+
+/** 透視で見られた側（自分）。持ち主は左の相手。 */
+function peekedTarget(): StateMessage {
+  return stateMsg({
+    view: playerView({
+      rules: ALL16,
+      prevRanks: [3, 1, 2, 4],
+      game: gameView({
+        hand: HAND12,
+        handCounts: [12, 7, 11, 13],
+        field: [{ seat: 1, play: group(['club-9'], 9), via: 'turn' }],
+        lastPlayer: 1,
+        abilities: { holder: 1, slots: 2, remaining: 1, selecting: false },
+        peekedMine: ['spade-6', 'club-10', 'heart-13'],
+        ban: 7 as never,
+      }),
+      awaiting: [{ id: 91, seat: 2, kind: 'turn', timer: 'turn' }],
+      mine: null,
+    }),
+    room: { ...lobby(true).room, phase: 'playing', seats: seats(), config: { mode: 'chofugo', rules: ALL16, gameCount: 5 } },
+    deadlines: [deadline(2, 'turn', 17_000, 91)],
+  });
+}
+
+function chofugoTurnScene(title: string, opts: Parameters<typeof abilityTurn>[0], extra: { panel?: AbilityPanel; steal?: CardId; skipOn?: boolean; line?: string; selected?: CardId[] } = {}): Scene {
+  return {
+    title,
+    render: () => {
+      const st = abilityTurn(opts);
+      return (
+        <Table
+          state={st}
+          snap={withSnap(st, { line: extra.line ?? null })}
+          api={noopApi}
+          fixedNow={NOW}
+          {...(extra.panel ? { initialPanel: extra.panel } : {})}
+          {...(extra.steal ? { initialStealCard: extra.steal } : {})}
+          {...(extra.skipOn ? { initialSkipOn: true } : {})}
+          {...(extra.selected ? { initialSelected: extra.selected } : {})}
+        />
+      );
+    },
+  };
+}
+
 type Scene = { title: string; render: () => React.ReactNode };
 
 function withSnap(st: StateMessage, over: Partial<Snapshot> = {}): Snapshot {
@@ -656,6 +801,74 @@ const SCENES: Record<string, Scene> = {
         ],
       };
       return <Menu state={st} feed={feed} onClose={() => {}} onLeave={() => {}} initial="history" />;
+    },
+  },
+  // ---------- その3 ----------
+  'lobby-chofugo': {
+    title: 'ロビー（超富豪・ホスト、説明を開いた）',
+    render: () => {
+      const st = lobbyCustom(true, ALL16, 'chofugo');
+      return <Lobby state={st} snap={withSnap(st)} api={noopApi} initialOpen="give_on_7" />;
+    },
+  },
+  'lobby-chofugo-guest': {
+    title: 'ロビー（超富豪・ホスト以外）',
+    render: () => {
+      const st = lobbyCustom(false, ALL16, 'chofugo');
+      return <Lobby state={st} snap={withSnap(st)} api={noopApi} />;
+    },
+  },
+  'ability-select': {
+    title: '特権の選択（選ぶ人・2個のうち1個を選んだ・手札16枚）',
+    render: () => {
+      const st = abilitySelectMine(['steal'], 2);
+      return <Table state={st} snap={withSnap(st)} api={noopApi} fixedNow={NOW} />;
+    },
+  },
+  'ability-select-full': {
+    title: '特権の選択（選ぶ人・枠がいっぱい・手札12枚）',
+    render: () => {
+      const st = abilitySelectMine(['peek', 'ban', 'skip'], 3, false);
+      return <Table state={st} snap={withSnap(st)} api={noopApi} fixedNow={NOW} />;
+    },
+  },
+  'ability-select-other': {
+    title: '特権の選択（ほかの人）',
+    render: () => {
+      const st = abilitySelectOther();
+      return <Table state={st} snap={withSnap(st)} api={noopApi} fixedNow={NOW} />;
+    },
+  },
+  'ability-select-other-12': {
+    title: '特権の選択（ほかの人・12文字の名前）',
+    render: () => {
+      const st = abilitySelectOther(NAMES12);
+      return <Table state={st} snap={withSnap(st)} api={noopApi} fixedNow={NOW} />;
+    },
+  },
+  'play-abilities': chofugoTurnScene('対戦（特権のボタン・親なので強制流しは暗い）', { chosen: ['peek', 'forceFlush', 'skip'], leader: true }, { line: 'たろう が 8を1枚 出した' }),
+  'play-abilities-skip': chofugoTurnScene('対戦（特権のボタン・スキップ ON）', { chosen: ['steal', 'ban', 'skip'] }, { skipOn: true, selected: ['spade-6', 'heart-6'] }),
+  'play-panel-peek': chofugoTurnScene('対戦（透視の選択の枠）', { chosen: ['peek', 'revolution'] }, { panel: 'peek' }),
+  'play-panel-peek-12': chofugoTurnScene('対戦（透視の選択の枠・12文字の名前）', { chosen: ['peek', 'revolution'], names: NAMES12 }, { panel: 'peek' }),
+  'play-panel-steal': chofugoTurnScene('対戦（強奪の選択の枠・渡すカードを選んだ）', { chosen: ['steal', 'skip'], hand: HAND16 }, { panel: 'steal', steal: 'club-3' }),
+  'play-panel-ban': chofugoTurnScene('対戦（独裁の選択の枠・ダイヤの3の義務で3は暗い）', { chosen: ['ban'], leader: true, openingCard: 'diamond-3', hand: ['diamond-3', ...HAND12.slice(1)] }, { panel: 'ban' }),
+  'play-panel-revolution': chofugoTurnScene('対戦（革命の確認）', { chosen: ['revolution', 'forceFlush'] }, { panel: 'revolution' }),
+  'play-panel-forceflush': chofugoTurnScene('対戦（強制流しの確認）', { chosen: ['revolution', 'forceFlush'] }, { panel: 'forceFlush' }),
+  'play-peek-holder': chofugoTurnScene(
+    '対戦（透視で見たカード・持ち主、独裁の札）',
+    { chosen: ['peek', 'ban', 'skip'], used: ['peek', 'ban'], peek: { target: 1, cards: ['heart-10', 'spade-13', 'joker-0'] }, ban: 7 },
+    { line: '独裁！ 7 は出せない' },
+  ),
+  'play-peek-16': chofugoTurnScene(
+    '対戦（透視3枚・10を含む、手札16枚、12文字の名前）',
+    { chosen: ['peek', 'steal', 'skip'], used: ['peek'], peek: { target: 1, cards: ['heart-10', 'club-10', 'spade-14'] }, hand: HAND16, names: NAMES12 },
+    { line: 'あなた が ABCDEFGHIJKL に 透視を使った' },
+  ),
+  'play-peeked': {
+    title: '対戦（透視で見られた側・持ち主の札・独裁の札）',
+    render: () => {
+      const st = peekedTarget();
+      return <Table state={st} snap={withSnap(st, { line: 'たろう に 3枚 見られた' })} api={noopApi} fixedNow={NOW} />;
     },
   },
   'play-menu-rules16': {

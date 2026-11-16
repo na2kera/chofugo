@@ -2,9 +2,10 @@
 // 階級の札（初回は出さない）、名前、裏向きのカード1枚と残り枚数。上がった人は順位の札に替え、枚数は出さない。
 // 手番の人は枠を明るく。その場でパスした人には「パス」の札。代役中の人は名前を暗く。
 
-import type { Place } from '@chofugo/engine';
+import type { CardId, Place } from '@chofugo/engine';
 import type { DeadlineView } from '@chofugo/server/protocol';
-import { PLACE_TITLE } from '../lib/cards.ts';
+import { PLACE_TITLE, cardLabel, faceOf, isRedSuit } from '../lib/cards.ts';
+import { abilityPlate, peekLabels } from '../lib/abilities.ts';
 import { ARROW_GLYPHS } from '../pixel/patterns.ts';
 import { Pixel } from '../pixel/Pixel.tsx';
 import { CardBack } from './Card.tsx';
@@ -28,6 +29,10 @@ export type OpponentProps = {
   offset: number;
   /** 順位が確定した演出中。 */
   flash: 'gold' | 'red' | null;
+  /** 特権の残りの個数（持ち主だけ。1個以上のときだけ札を出す、design-3 §4.4）。 */
+  abilityLeft?: number | null;
+  /** 透視で見たこの人のカード（自分が持ち主のときだけ、design-3 §4.4）。 */
+  peek?: readonly CardId[] | null;
   fixedNow?: number;
 };
 
@@ -40,6 +45,8 @@ export function Opponent(p: OpponentProps) {
     p.passed ? 'パス' : null,
     p.active ? '考え中' : null,
     p.target === true ? '渡す相手' : null,
+    abilityPlate(p.abilityLeft) ?? null,
+    p.peek && p.peek.length > 0 ? `透視で見たカード ${p.peek.map(cardLabel).join('・')}` : null,
   ]
     .filter(Boolean)
     .join('、');
@@ -60,6 +67,23 @@ export function Opponent(p: OpponentProps) {
           </>
         )}
       </div>
+      {abilityPlate(p.abilityLeft) !== null && (
+        <div className={s.plateRow2}>
+          <span className="f plate">{abilityPlate(p.abilityLeft)}</span>
+        </div>
+      )}
+      {p.peek && p.peek.length > 0 && (
+        <div className={s.peek} aria-hidden="true">
+          {peekLabels(p.peek).map((t, i) => {
+            const f = faceOf(p.peek![i]!);
+            return (
+              <span key={p.peek![i]} className={f !== null && f.kind === 'normal' && isRedSuit(f.suit) ? 'redt' : f !== null && f.kind === 'joker' ? 'redt' : undefined}>
+                {t}
+              </span>
+            );
+          })}
+        </div>
+      )}
       <div className={s.timer}>
         {p.deadline !== null && <TimeBar deadline={p.deadline} offset={p.offset} segments={8} small {...(p.fixedNow !== undefined ? { fixedNow: p.fixedNow } : {})} />}
       </div>

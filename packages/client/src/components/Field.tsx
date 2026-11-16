@@ -2,7 +2,7 @@
 // 強さが逆のとき（game.reversed）は枠を赤にする。ジョーカーには何の代わりかを小さく添える。
 
 import type { Play, Rank, SeatId, Suit } from '@chofugo/engine';
-import { jokerStandIn, isRedSuit } from '../lib/cards.ts';
+import { jokerStandIn, isRedSuit, rankKey } from '../lib/cards.ts';
 import { fieldLayout, ROW_STEP } from '../lib/layout.ts';
 import { SUIT_GLYPHS_SMALL } from '../pixel/patterns.ts';
 import { Pixel } from '../pixel/Pixel.tsx';
@@ -22,6 +22,8 @@ type Props = {
   seqLock?: { suits: Suit[]; rank: Rank } | null;
   /** 9リバース中（その2）。「逆回り」の札を出す。 */
   orderReversed?: boolean;
+  /** 独裁で封じた数字（その3）。「独裁 7」の札を出す。 */
+  ban?: Rank | null;
   motion: FieldMotion;
   /** 演出の識別（同じ手でも演出をやり直すため）。 */
   motionKey?: string;
@@ -44,7 +46,7 @@ function LockPlate({ label, suits }: { label: string; suits: Suit[] }) {
   );
 }
 
-export function Field({ play, revolution, tempReverse, reversed, suitLock, seqLock = null, orderReversed = false, motion, motionKey, note }: Props) {
+export function Field({ play, revolution, tempReverse, reversed, suitLock, seqLock = null, orderReversed = false, ban = null, motion, motionKey, note }: Props) {
   const [ref, width] = useWidth<HTMLDivElement>(340);
   const cards = play?.cards ?? [];
   const lay = fieldLayout(cards.length, width);
@@ -58,13 +60,14 @@ export function Field({ play, revolution, tempReverse, reversed, suitLock, seqLo
     motion === null ? '' : motion.kind === 'out' ? s.out : motion.from === 'me' ? s.inMe : [s.inLeft, s.inCenter, s.inRight][motion.from];
   return (
     <div className={`f ${reversed ? s.frameRed : s.frame} ${s.field}`}>
-      {(revolution || tempReverse || suitLock !== null || seqLock !== null || orderReversed) && (
+      {(revolution || tempReverse || suitLock !== null || seqLock !== null || orderReversed || ban !== null) && (
         <div className={s.states}>
           {revolution && <span className={`f red redt ${s.state}`}>革命中</span>}
           {tempReverse && <span className={`f red redt ${s.state}`}>J バック中</span>}
           {suitLock !== null && <LockPlate label="縛り" suits={suitLock} />}
           {seqLock !== null && <LockPlate label="激縛り" suits={seqLock.suits} />}
           {orderReversed && <span className={`f win hi ${s.state}`}>逆回り</span>}
+          {ban !== null && <span className={`f win hi ${s.state}`}>独裁 {rankKey(ban)}</span>}
         </div>
       )}
       <div ref={ref} className={s.area}>

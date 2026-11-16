@@ -96,3 +96,14 @@
   background-size: 16px 16px;
   image-rendering: pixelated;
 }
+
+/* 透視で見られたカード（design-3 §4.4）：上の端に赤い線（高さ 4px）。枠の上の辺に重ねる */
+.peeked::before {
+  content: '';
+  position: absolute;
+  left: -6px;
+  right: -6px;
+  top: -6px;
+  height: 4px;
+  background: var(--red);
+}

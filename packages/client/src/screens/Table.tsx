@@ -1,8 +1,10 @@
 // カード交換と対戦の画面（design-client §4.4〜§4.6、§7.1、§7.4〜§7.6）。見本の2枚目の画面のとおり。
 // 上から：上の帯 / 相手3人 / 場 / メッセージ / 自分 / 手札 / ボタン。
+// その3：特権の選択（matchPhase 'ability'）も同じ骨組みで、場の枠の位置に特権の一覧を出す（design-3 §4.2）。
+// 対戦中は、自分の番で未使用の特権があるときだけ、メッセージの欄の下に特権のボタンを並べる（§4.3）。
 
 import { useState } from 'react';
-import type { CardId, LegalPlay, SeatId } from '@chofugo/engine';
+import type { AbilityId, CardId, LegalPlay, SeatId } from '@chofugo/engine';
 import type { CardLook } from '../components/Card.tsx';
 import { Field, type FieldMotion } from '../components/Field.tsx';
 import { Hand } from '../components/Hand.tsx';
@@ -28,6 +30,17 @@ import {
 import { ARROW_GLYPHS } from '../pixel/patterns.ts';
 import { Pixel } from '../pixel/Pixel.tsx';
 import { Menu } from './Menu.tsx';
+import { AbilityBar, AbilityPanelBox, AbilitySelectList, type UseArgs } from './Abilities.tsx';
+import {
+  abilityButtons,
+  abilityPlate,
+  playWithSkip,
+  selectingLine,
+  selectPrompt,
+  toggleDraft,
+  toggleStealCard,
+  type AbilityPanel,
+} from '../lib/abilities.ts';
 import type { ScreenProps } from './types.ts';
 import s from './Table.module.css';
 
@@ -39,9 +52,13 @@ type Props = ScreenProps & {
   initialSelected?: CardId[];
   initialStep?: PlayStep;
   initialMenu?: boolean;
+  /** 見本ページ用：最初に開いている特権の選択の枠・強奪で選んだカード・スキップの ON。 */
+  initialPanel?: AbilityPanel;
+  initialStealCard?: CardId;
+  initialSkipOn?: boolean;
 };
 
-export function Table({ state, snap, api, fixedNow, initialSelected, initialStep, initialMenu }: Props) {
+export function Table({ state, snap, api, fixedNow, initialSelected, initialStep, initialMenu, initialPanel, initialStealCard, initialSkipOn }: Props) {
   const view = state.view!;
   const game = view.game!;
   const me = view.seat;
@@ -54,10 +71,19 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
   const [stepS, setStepS] = useState<Scoped<PlayStep>>({ key, value: initialStep ?? NO_STEP });
   const [receivedCleared, setReceivedCleared] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(initialMenu ?? false);
+  // 特権の選択の枠・強奪で選んだカード・スキップの ON/OFF も、試合・ゲーム・待ちの番号に結び付ける（design-3 §6.1）。
+  // 特権を使うと待ちの番号が変わるので、すべて捨てられる
+  const [panelS, setPanelS] = useState<Scoped<AbilityPanel | null>>({ key, value: initialPanel ?? null });
+  const [stealS, setStealS] = useState<Scoped<CardId | null>>({ key, value: initialStealCard ?? null });
+  const [skipS, setSkipS] = useState<Scoped<boolean>>({ key, value: initialSkipOn ?? false });
   /** 最後に出した「出せない理由」（ダイヤの3の案内より優先して見せるため）。 */
   const [dimLine, setDimLine] = useState<string | null>(null);
   const selected = scopedValue(sel, key, defaultSel);
   const step = scopedValue(stepS, key, NO_STEP);
+  const panel = mine !== null && mine.kind === 'turn' ? scopedValue(panelS, key, null) : null;
+  const stealCard = panel === 'steal' ? scopedValue(stealS, key, null) : null;
+  const skipOn = mine !== null && mine.kind === 'turn' && mine.skipAvailable ? scopedValue(skipS, key, false) : false;
+  const peekedMine = new Set(game.peekedMine ?? []);
   const canAct = snap.ready && snap.pending === null && !state.room.paused;
   const names = (seat: SeatId) => seatName(state.room.seats, seat);
   const deadlineOf = (seat: SeatId) => state.deadlines.find((d) => d.seat === seat) ?? null;
@@ -92,6 +118,14 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
       const next = toggleChoice(mine, hand, selected, id);
       if (next !== null) setSel({ key, value: next });
     };
+  } else if (mine !== null && mine.kind === 'turn' && panel === 'steal') {
+    // 強奪の枠を開いている間は、渡せるカードから1枚だけ選ぶ（出せる手の一覧は使わない、design-3 §6.3）
+    const cards = mine.abilities.find((u) => u.id === 'steal')?.cards ?? [];
+    lookOf = (id) => (id === stealCard ? 'sel' : cards.includes(id) ? 'normal' : 'dim');
+    onPress = (id) => {
+      const next = toggleStealCard(cards, stealCard, id);
+      if (next !== undefined) setStealS({ key, value: next });
+    };
   } else if (mine !== null && (mine.kind === 'turn' || mine.kind === 'respond')) {
     plays = mine.plays;
     const ev = evaluateSelection(hand, plays, selected);
@@ -101,7 +135,7 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
       if (step.kind !== 'none') setStepS({ key, value: NO_STEP });
       const next = toggleCard(hand, plays, selected, id);
       if (next === null) {
-        const text = DIM_REASON_TEXT[dimReason(mine, plays, selected, id, game.suitLock, { seqLock: game.seqLock, openingCard: game.openingCard })];
+        const text = DIM_REASON_TEXT[dimReason(mine, plays, selected, id, game.suitLock, { seqLock: game.seqLock, openingCard: game.openingCard, ban: game.ban })];
         setDimLine(text);
         api.showLine(text);
         return;
@@ -118,8 +152,15 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
   };
   const sendPlay = (p: LegalPlay) => {
     if (mine === null || mine.kind !== 'turn') return;
+    // スキップを ON にしていて、その手に付けられないときは送らない（design-3 §4.3。形を選んだあとの手で判定する）
+    const sk = playWithSkip(p, skipOn);
+    if (!sk.ok) {
+      api.showLine(sk.line);
+      setStepS({ key, value: NO_STEP });
+      return;
+    }
     const ok = api.sendAction(
-      { type: 'play', awaitId: mine.awaitId, cards: p.cards, shape: p.shape, ...(p.foul ? { confirmFoul: true } : {}) },
+      { type: 'play', awaitId: mine.awaitId, cards: p.cards, shape: p.shape, ...(p.foul ? { confirmFoul: true } : {}), ...(sk.withSkip ? { withSkip: true } : {}) },
       'play',
     );
     if (ok) {
@@ -155,6 +196,49 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
     if (!skip && cards.length === 0) return;
     if (api.sendAction({ type: 'choose', awaitId: mine.awaitId, cards }, skip ? 'chooseSkip' : 'choose')) markActed();
   };
+  // ---------- 特権 ----------
+  const onDraft = (id: AbilityId) => {
+    if (mine === null || mine.kind !== 'abilitySelect') return;
+    const next = toggleDraft(mine, id);
+    if (next === null) return;
+    // 画面の側では選択を変えない。返事（保存された draft）が届くまで押せない（design-3 §6.2）
+    api.sendAction({ type: 'selectAbilities', awaitId: mine.awaitId, abilities: next, confirm: false }, 'abilityDraft');
+  };
+  const onConfirmAbilities = () => {
+    if (mine === null || mine.kind !== 'abilitySelect') return;
+    api.sendAction({ type: 'selectAbilities', awaitId: mine.awaitId, abilities: mine.draft, confirm: true }, 'abilityConfirm');
+  };
+  const onAbilityButton = (id: AbilityId) => {
+    if (mine === null || mine.kind !== 'turn') return;
+    if (id === 'skip') {
+      setSkipS({ key, value: !skipOn });
+      return;
+    }
+    setStealS({ key, value: null });
+    setPanelS({ key, value: panel === id ? null : id });
+    if (step.kind !== 'none') setStepS({ key, value: NO_STEP });
+  };
+  const closePanel = () => {
+    setPanelS({ key, value: null });
+    setStealS({ key, value: null });
+  };
+  const onUse = (a: UseArgs) => {
+    if (mine === null || mine.kind !== 'turn') return;
+    const card = a.ability === 'steal' ? stealCard : null;
+    if (a.ability === 'steal' && card === null) return;
+    api.sendAction(
+      {
+        type: 'useAbility',
+        awaitId: mine.awaitId,
+        ability: a.ability,
+        ...(a.target !== undefined ? { target: a.target } : {}),
+        ...(a.rank !== undefined ? { rank: a.rank } : {}),
+        ...(card !== null ? { card } : {}),
+      },
+      'ability',
+    );
+  };
+
   const onGive = () => {
     if (mine === null || mine.kind !== 'exchangeGive') return;
     api.sendAction({ type: 'exchangeGive', awaitId: mine.awaitId, cards: exchangeCards }, 'give');
@@ -187,6 +271,11 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
     line = snap.notice;
   } else if (phase === 'exchange') {
     line = mine !== null && mine.kind === 'exchangeGive' ? exchangePrompt(mine) : '交換中…';
+  } else if (phase === 'ability') {
+    // 特権の選択（design-3 §4.2）：選ぶ人には個数、ほかの人には誰が何個選んでいるか
+    const ab = game.abilities;
+    if (mine !== null && mine.kind === 'abilitySelect') line = selectPrompt(mine.slots);
+    else if (ab !== null) line = selectingLine(names(ab.holder), ab.slots);
   } else if (mine !== null && mine.kind === 'respond') {
     line = mine.rule === 'block_flush_with_4' ? '4を2枚出して 8切りを止めますか？' : 'スペードの3で返しますか？';
   } else if (rr !== null && rr.asking !== null && rr.asking !== me) {
@@ -204,14 +293,24 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
   const myRank = view.prevRanks?.[me] ?? null;
   const myPlace = game.places[me] ?? null;
   const myDeadline = deadlineOf(me);
-  const myTurn = mine !== null && (mine.kind === 'turn' || mine.kind === 'respond' || mine.kind === 'choice');
+  const myTurn = mine !== null && (mine.kind === 'turn' || mine.kind === 'respond' || mine.kind === 'choice' || mine.kind === 'abilitySelect');
+  const myAbilityPlate = game.abilities !== null && game.abilities.holder === me ? abilityPlate(game.abilities.remaining) : null;
+  const buttons = abilityButtons(mine);
   // 7渡しの相手（選ぶ人にだけ、相手の枠を手番と同じ明るい枠にする。design-2 §4.2）
   const giveTo = mine !== null && mine.kind === 'choice' ? mine.to : null;
   const busy = (what: string) => snap.pending !== null && snap.pending.what === what;
 
   // ---------- ボタン ----------
   let actions: React.ReactNode = null;
-  if (mine !== null && mine.kind === 'exchangeGive') {
+  if (mine !== null && mine.kind === 'abilitySelect') {
+    actions = (
+      <div className={s.actions1}>
+        <button type="button" className="f btn" disabled={!canAct} onClick={onConfirmAbilities}>
+          決定
+        </button>
+      </div>
+    );
+  } else if (mine !== null && mine.kind === 'exchangeGive') {
     actions = (
       <div className={s.actions1}>
         <button type="button" className="f btn" disabled={!canAct || !exchangeReady || busy('give')} onClick={onGive}>
@@ -317,12 +416,19 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
               deadline={deadlineOf(seat)}
               offset={snap.offset}
               flash={flashOf(seat)}
+              abilityLeft={game.abilities !== null && game.abilities.holder === seat ? game.abilities.remaining : null}
+              peek={game.peek !== null && game.peek.target === seat ? game.peek.cards : null}
               {...(fixedNow !== undefined ? { fixedNow } : {})}
             />
           );
         })}
       </div>
 
+      {mine !== null && mine.kind === 'abilitySelect' ? (
+        <AbilitySelectList mine={mine} disabled={!canAct} onToggle={onDraft} />
+      ) : mine !== null && mine.kind === 'turn' && panel !== null ? (
+        <AbilityPanelBox panel={panel} mine={mine} nameOf={names} stealCard={stealCard} disabled={!canAct} onUse={onUse} onClose={closePanel} />
+      ) : (
       <Field
         play={fieldPlay}
         revolution={game.revolution}
@@ -331,16 +437,21 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
         suitLock={game.suitLock}
         seqLock={game.seqLock}
         orderReversed={game.orderReversed}
+        ban={game.ban}
         motion={motion}
         {...(motionKey !== undefined ? { motionKey } : {})}
       />
+      )}
 
       <div className={`f win ${s.msg}`} role="status" aria-live="polite">
         <span className={s.msgText}>{line ?? ''}</span>
       </div>
 
+      <AbilityBar buttons={buttons} open={panel} skipOn={skipOn} disabled={!canAct} onPress={onAbilityButton} />
+
       <div className={`${s.me} ${flashOf(me) !== null ? s.meFlash : ''}`}>
         {myRank !== null && <span className={myRank === 1 ? 'f plate' : 'f plate2'}>{PLACE_TITLE[myRank]}</span>}
+        {myAbilityPlate !== null && <span className="f plate">{myAbilityPlate}</span>}
         {myPlace !== null && <span className={`f ${game.placeReasons[me] === 'foul' || game.placeReasons[me] === 'dethrone' ? 'red redt' : 'plate'}`}>{myPlace}位</span>}
         {myTurn && <span className="hi">あなたの番</span>}
         <span className={s.sp} />
@@ -354,7 +465,7 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
         {myDeadline !== null && <TimeBar deadline={myDeadline} offset={snap.offset} mine {...(fixedNow !== undefined ? { fixedNow } : {})} />}
       </div>
 
-      <Hand cards={hand} lookOf={lookOf} receivedOf={(id) => received.has(id)} {...(onPress ? { onPress } : {})} />
+      <Hand cards={hand} lookOf={lookOf} receivedOf={(id) => received.has(id)} peekedOf={(id) => peekedMine.has(id)} {...(onPress ? { onPress } : {})} />
 
       <div className={s.actionArea}>{actions}</div>
 

@@ -1,0 +1,104 @@
+/* 特権の部品（design-3 §4.2、§4.3、§6.7）。余白・大きさは 2px の倍数、文字は 16px だけ、押せるものは高さ 44px 以上。 */
+
+/* 選択の一覧：場の枠と同じ位置・余白（Field の .field と同じ margin） */
+.box {
+  margin: 14px 14px 8px;
+  padding: 4px;
+  flex: none;
+}
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+/* 1行：名前（16px）と説明（16px）を上下2行。説明は折り返してよい（§6.7） */
+.row {
+  width: 100%;
+  min-height: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 0 4px;
+  text-align: left;
+  line-height: 16px;
+}
+.desc {
+  color: var(--muted);
+}
+.full {
+  color: var(--dim-line);
+}
+.full .desc {
+  color: var(--dim-line);
+}
+
+/* 手番の特権のボタンの並び（メッセージの欄と自分の行の間） */
+.bar {
+  display: grid;
+  gap: 8px;
+  margin: 8px 14px 0;
+  flex: none;
+}
+.barBtn {
+  min-height: 44px;
+  height: 44px;
+  width: 100%;
+  display: grid;
+  place-items: center;
+  padding: 0 4px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* 選択の枠：場の枠の位置 */
+.panel {
+  flex: 1 0 auto;
+  min-height: 132px;
+  margin: 14px 14px 8px;
+  padding: 4px 6px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.prompt {
+  white-space: pre-line;
+  margin: 0;
+  line-height: 24px;
+  text-align: center;
+  color: var(--gold-hi);
+}
+.btn {
+  min-height: 44px;
+}
+.targets {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.name {
+  white-space: nowrap;
+  overflow: hidden;
+}
+.ranks {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+}
+.rank {
+  min-height: 44px;
+  height: 44px;
+  padding: 0;
+  letter-spacing: 0;
+}
+.one {
+  display: grid;
+}
+.two {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
