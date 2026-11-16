@@ -67,7 +67,7 @@ pnpm --filter @chofugo/client build       # dist/client（画面）と dist/chof
 ## デプロイ
 
 ```sh
-pnpm deploy         # ルートから。client をビルドしてから、ビルドの出力の設定で wrangler deploy
+pnpm run deploy     # ルートから（`pnpm deploy` は pnpm の組み込みコマンドなので `run` を付ける）。client をビルドしてから、ビルドの出力の設定で wrangler deploy
 ```
 
 - 必ず client のビルドの出力（`vite build` が作る `dist/chofugo/wrangler.json`）でデプロイする。`packages/server` で `wrangler deploy` を実行すると、画面の静的ファイルが含まれない。

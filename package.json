@@ -13,6 +13,6 @@
     "preview": "pnpm --filter @chofugo/client preview",
     "test": "pnpm -r --if-present test",
     "typecheck": "pnpm -r --if-present typecheck",
-    "deploy": "pnpm --filter @chofugo/client deploy"
+    "deploy": "pnpm --filter @chofugo/client run deploy"
   }
 }
