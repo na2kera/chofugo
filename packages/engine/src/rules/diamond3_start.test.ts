@@ -31,6 +31,7 @@ describe('ダイヤの3スタート（decisions §6.11、§16.3）', () => {
 
   it('交換でダイヤの3が動いたあとは、交換が終わった時点で持っている人が親', () => {
     let moved = 0;
+    let exchangeHidden = 0; // 交換中の starter がダイヤの3の持ち主と違った回数
     for (let i = 0; i < 40 && moved < 3; i++) {
       const created = createMatch(cfg(['diamond3_start']), [i + 100, 1, 2, 3]);
       if (!created.ok) throw new Error();
@@ -47,9 +48,13 @@ describe('ダイヤの3スタート（decisions §6.11、§16.3）', () => {
       expect(s.phase).toBe('exchange');
       expect(r.events[0]).toMatchObject({ type: 'gameStart', leaderRule: 'diamond3' });
       const before = holder(s);
-      // 交換が終わるまでの starter は仮の値（その時点でダイヤの3を持つ席）
-      expect(s.game!.starter).toBe(before);
+      // 交換の間は決め直さない: starter はその1の値（前の大貧民）、義務は null（design-2 §6.6）
+      const lowest = ([0, 1, 2, 3] as SeatId[]).find((x) => s.prevRanks![x] === 4)!;
       while (s.phase === 'exchange') {
+        for (const seat of [0, 1, 2, 3] as SeatId[]) {
+          expect(viewFor(s, seat).game).toMatchObject({ starter: lowest, openingCard: null });
+        }
+        if (holder(s) !== lowest) exchangeHidden++;
         const x = applyAction(s, { type: 'auto', awaitId: awaiting(s)[0]!.id, policy: 'cpu' });
         if (!x.ok) throw new Error(x.error.message);
         s = x.state;
@@ -61,6 +66,7 @@ describe('ダイヤの3スタート（decisions §6.11、§16.3）', () => {
       if (before !== after) moved++;
     }
     expect(moved).toBeGreaterThan(0);
+    expect(exchangeHidden).toBeGreaterThan(0);
   });
 
   it('最初の1手で義務が外れる。組・階段・砂嵐にダイヤの3を含めてもよい', () => {

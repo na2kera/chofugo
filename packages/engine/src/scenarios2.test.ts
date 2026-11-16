@@ -212,3 +212,73 @@ describe('choose に壊れた入力を送っても例外を投げない', () => 
     expect(JSON.stringify(d.state)).toBe(before);
   });
 });
+
+describe('穴のある配列は、どの操作でも malformed で拒否する（design-2 §6.6）', () => {
+  const holes = (n: number): string[] => new Array<string>(n);
+  const expectMalformed = (s: MatchState, a: Action) => {
+    const before = JSON.stringify(s); // 状態と乱数（rng も状態の中）
+    const r = applyAction(s, a);
+    expect(r.ok, JSON.stringify(a)).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe('malformed');
+    expect(JSON.stringify(s)).toBe(before);
+  };
+  const sparse = (n: number, at: number, id: string): string[] => {
+    const a = holes(n);
+    a[at] = id;
+    return a;
+  };
+
+  it('play・respond・choose', () => {
+    const t = scene({ rules: ['spade3_beats_joker', 'give_on_7'], hands: ['X0 S7 H5', 'S3 H6', 'D7 D8', 'C4 CK'], turn: 0 });
+    expectMalformed(t, { type: 'play', seat: 0, awaitId: 100, cards: holes(1) });
+    expectMalformed(t, { type: 'play', seat: 0, awaitId: 100, cards: sparse(2, 0, 'spade-7') });
+    const d = new Driver(t);
+    d.play(0, 'X0');
+    expectMalformed(d.state, { type: 'respond', seat: 1, awaitId: d.current().id, cards: holes(1) });
+    const c = new Driver(scene({ rules: ['give_on_7'], hands: ['S7 H7 H5 H6', 'S9 C3', 'D9', 'C9'], turn: 0 }));
+    c.play(0, 'S7 H7');
+    const w = c.current();
+    expectMalformed(c.state, { type: 'choose', seat: 0, awaitId: w.id, cards: holes(1) });
+    expectMalformed(c.state, { type: 'choose', seat: 0, awaitId: w.id, cards: sparse(2, 1, 'heart-5') });
+  });
+
+  it('exchangeGive', () => {
+    const created = createMatch(cfg([], 5), [5, 6, 7, 8]);
+    if (!created.ok) throw new Error();
+    let s = created.state;
+    while (s.phase === 'play') {
+      const r = applyAction(s, { type: 'auto', awaitId: awaiting(s)[0]!.id, policy: 'cpu' });
+      if (!r.ok) throw new Error(r.error.message);
+      s = r.state;
+    }
+    const n = applyAction(s, { type: 'nextGame' });
+    if (!n.ok) throw new Error();
+    s = n.state;
+    let tested = 0;
+    while (s.phase === 'exchange') {
+      for (const w of awaiting(s)) {
+        const hand = s.game!.hands[w.seat]!;
+        expectMalformed(s, { type: 'exchangeGive', seat: w.seat, awaitId: w.id, cards: holes(2) });
+        expectMalformed(s, { type: 'exchangeGive', seat: w.seat, awaitId: w.id, cards: sparse(2, 0, hand[0]!) });
+        tested++;
+      }
+      const r = applyAction(s, { type: 'auto', awaitId: awaiting(s)[0]!.id, policy: 'cpu' });
+      if (!r.ok) throw new Error(r.error.message);
+      s = r.state;
+    }
+    expect(tested).toBeGreaterThan(0);
+  });
+});
+
+describe('K スキップで上がり、残りの全員を飛ばす', () => {
+  it('場が流れ、出した人の席から進行方向で次の、残っている人が親', () => {
+    const d = new Driver(scene({ rules: ['skip_on_k'], hands: ['SK HK DK', 'H3 H4', 'D3 D4', 'C3 C4'], turn: 0 }));
+    const ev = d.play(0, 'SK HK DK');
+    expect(ev.map((e) => e.type)).toEqual(['play', 'placed', 'skipped', 'fieldCleared']);
+    expect(ev[1]).toMatchObject({ seat: 0, place: 1, reason: 'finish' });
+    expect(ev[2]).toMatchObject({ by: 0, seats: [1, 2, 3] });
+    expect(ev[3]).toMatchObject({ reason: 'allPassed', leader: 1 });
+    expect(d.current()).toMatchObject({ seat: 1, kind: 'turn' });
+    expect(d.game.field).toEqual([]);
+  });
+});

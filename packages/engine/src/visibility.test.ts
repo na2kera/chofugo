@@ -39,7 +39,7 @@ function learn(known: Set<string>, events: readonly GameEvent[], viewer: SeatId)
 /** viewer 以外の2席の手札から、viewer の知らないカードを1枚ずつ入れ替える（枚数は変わらない）。 */
 function swapHidden(s: MatchState, viewer: SeatId, rng: RngState, known: ReadonlySet<string>): MatchState | null {
   const g = s.game!;
-  // ダイヤの3の義務が残っている間は、持っている席（親）が全員に分かる
+  // 対戦の段階でダイヤの3の義務が残っている間は、持っている席（親）が全員に分かる（交換中は義務を入れないので null）
   const unknown = (x: SeatId) => g.hands[x]!.filter((id) => !known.has(id) && id !== g.openingCard);
   const others = SEATS.filter((x) => x !== viewer && unknown(x).length > 0);
   if (others.length < 2) return null;
@@ -182,5 +182,60 @@ describe('見える情報', () => {
     const deal = ev.find((e) => e.type === 'deal');
     expect(deal).toMatchObject({ hand: s.state.game!.hands[2] });
     expect(JSON.stringify(ev)).not.toContain(`"${s.state.game!.hands[0]![0]}"`);
+  });
+});
+
+describe('見える情報（ダイヤの3スタートの交換中、design-2 §6.6）', () => {
+  it('交換中にダイヤの3をほかの席の間で入れ替えても、その席から見える状態は変わらない（親も義務もまだ見せない）', () => {
+    let checked = 0;
+    for (let m = 0; m < 20; m++) {
+      const created = createMatch(cfg(['diamond3_start', 'flush_on_8'], 5), [m + 41, 2, 7, 1]);
+      if (!created.ok) throw new Error();
+      let s = created.state;
+      while (s.phase === 'play') {
+        const r = applyAction(s, { type: 'auto', awaitId: awaiting(s)[0]!.id, policy: 'cpu' });
+        if (!r.ok) throw new Error(r.error.message);
+        s = r.state;
+      }
+      const n = applyAction(s, { type: 'nextGame' });
+      if (!n.ok) throw new Error();
+      s = n.state;
+      while (s.phase === 'exchange') {
+        const g = s.game!;
+        const holder = SEATS.find((x) => g.hands[x]!.includes('diamond-3'))!;
+        // 交換で渡した・受け取ったカードは当事者に見えるので、その席は見る側にしない
+        const touched = (v: SeatId) =>
+          g.exchange!.pairs.some(
+            (p) => (p.lower === v || p.upper === v) && [...(p.lowerGave ?? []), ...(p.upperGave ?? [])].includes('diamond-3'),
+          );
+        for (const viewer of SEATS) {
+          if (viewer === holder || touched(viewer)) continue;
+          const other = SEATS.find((x) => x !== viewer && x !== holder && g.hands[x]!.length > 0)!;
+          const t = deepClone(s);
+          const hh = t.game!.hands[holder]!;
+          const ho = t.game!.hands[other]!;
+          // 見る側が交換で渡した・受け取ったカードは入れ替えない
+          const seen = g.exchange!.pairs
+            .filter((p) => p.lower === viewer || p.upper === viewer)
+            .flatMap((p) => [...(p.lowerGave ?? []), ...(p.upperGave ?? [])]);
+          const card = ho.find((id) => !seen.includes(id));
+          if (card === undefined) continue;
+          hh[hh.indexOf('diamond-3')] = card;
+          ho[ho.indexOf(card)] = 'diamond-3';
+          t.game!.hands[holder] = sortCardIds(hh);
+          t.game!.hands[other] = sortCardIds(ho);
+          expect(viewFor(t, viewer)).toStrictEqual(viewFor(s, viewer));
+          expect(viewFor(s, viewer).game?.openingCard).toBeNull();
+          checked++;
+        }
+        const r = applyAction(s, { type: 'auto', awaitId: awaiting(s)[0]!.id, policy: 'cpu' });
+        if (!r.ok) throw new Error(r.error.message);
+        s = r.state;
+      }
+      // 交換が終わったら、親と義務が入る
+      expect(s.game!.hands[s.game!.starter]).toContain('diamond-3');
+      expect(s.game!.openingCard).toBe('diamond-3');
+    }
+    expect(checked).toBeGreaterThan(20);
   });
 });

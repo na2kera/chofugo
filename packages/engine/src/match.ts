@@ -144,8 +144,9 @@ function startGame(c: Ctx): void {
   s.game = game;
   s.phase = 'play';
   // 乱数は、その1と同じ時点で同じ回数だけ引いてある。モジュールが親を決めるときは、その結果を使わない（design-2 §2.3）。
-  // 交換があるときは、ここで決まる親は仮の値で、交換のあとに決め直す（exchange.ts）
-  applyStarterRules(c);
+  // 交換があるときは、交換が終わるまで決め直さない（exchange.ts）。交換の間の starter はその1の値（前の大貧民）、
+  // openingCard は null のまま（交換の間にダイヤの3の持ち主を見せないため、design-2 §6.6）
+  if (prev === null) applyStarterRules(c);
   const leaderRule = c.mods.find((m) => m.leaderRule !== undefined)?.leaderRule ?? (prev === null ? 'random' : 'prevLowest');
   emit(c, { type: 'gameStart', leaderRule });
   emit(c, { type: 'deal', counts: hands.map((h) => h.length), hands: hands.map((h) => h.slice()) });
@@ -159,8 +160,13 @@ function isSeat(v: unknown): v is SeatId {
   return v === 0 || v === 1 || v === 2 || v === 3;
 }
 
+/** カード ID の列か。穴のある配列（new Array(1) など）も拒否する（.every は穴を飛ばすので、添字で確かめる。design-2 §6.6）。 */
 function isCardList(v: unknown): v is CardId[] {
-  return Array.isArray(v) && v.length <= 54 && v.every((x) => typeof x === 'string');
+  if (!Array.isArray(v) || v.length > 54) return false;
+  for (let i = 0; i < v.length; i++) {
+    if (!(i in v) || typeof v[i] !== 'string') return false;
+  }
+  return true;
 }
 
 /** いま待っている操作（並行して複数あり得る）。 */

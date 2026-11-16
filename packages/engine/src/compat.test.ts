@@ -3,12 +3,12 @@
 // 出来事の列と最後の状態の要点（得点・結果・乱数の状態・通し番号）を記録したファイルと完全に一致することを確かめる。
 //
 // 記録はその2の変更を入れる前の engine（コミット「engine: その1と同じ動きの検査の記録を追加」）で作った。
-// ふだんは比較だけを行う（記録と違えば失敗する）。
+// ふだんは比較だけを行う。記録と違えば失敗し、記録のファイルがなくても失敗する（黙って作り直さない。design-2 §6.6）。
 //
-// 記録を作り直す手順（定番8種の挙動を意図して変えたときだけ。ふつうは作り直さない）:
-//   pnpm --filter @chofugo/engine exec vitest run src/compat.test.ts -u
-// 記録のファイルは src/compat/ にある。作り直したら差分を確かめてからコミットする。
-// 注意: 記録のファイルを消して実行すると、CI 以外では新しく書き出される（vitest のファイルスナップショットの決まり）。
+// 記録を作る・作り直す手順（定番8種の挙動を意図して変えたときだけ。ふつうは作り直さない）:
+//   CHOFUGO_COMPAT_RECORD=1 pnpm --filter @chofugo/engine exec vitest run src/compat.test.ts -u
+// 環境変数を付けたときだけ、vitest のファイルスナップショットで src/compat/ に書き出す（-u で上書き）。
+// 作り直したら差分を確かめてからコミットする。
 
 import { describe, expect, it } from 'vitest';
 import {
@@ -105,13 +105,40 @@ function record(rules: RuleId[], seed: Seed4, mode: Mode): string {
   return [JSON.stringify(summary), ...events.map((e) => JSON.stringify(e))].join('\n') + '\n';
 }
 
+const RECORD_MODE = process.env['CHOFUGO_COMPAT_RECORD'] === '1';
+
+/** 記録のファイル（ふだんの比較に使う。読むだけ）。キーは './compat/名前.jsonl'。 */
+const RECORDS = import.meta.glob('./compat/*.jsonl', { query: '?raw', import: 'default', eager: true });
+
 describe('その1と同じ動きの検査（定番8種だけの試合）', () => {
+  it('記録のファイルの数が、試合の一覧と同じ', () => {
+    if (RECORD_MODE) return;
+    const expected = COMBOS.length * SEEDS.reduce((n, _, si) => n + (si < 2 ? 2 : 1), 0);
+    expect(Object.keys(RECORDS)).toHaveLength(expected);
+  });
+
   for (const combo of COMBOS) {
     SEEDS.forEach((seed, si) => {
       const modes: Mode[] = si < 2 ? ['cpu', 'mixed'] : ['cpu'];
       for (const mode of modes) {
+        const path = `./compat/${combo.name}-s${si}-${mode}.jsonl`;
         it(`${combo.name} / 種${si} / ${mode}`, async () => {
-          await expect(record(combo.rules, seed, mode)).toMatchFileSnapshot(`./compat/${combo.name}-s${si}-${mode}.jsonl`);
+          const actual = record(combo.rules, seed, mode);
+          if (RECORD_MODE) {
+            await expect(actual).toMatchFileSnapshot(path);
+            return;
+          }
+          const saved = RECORDS[path];
+          if (saved === undefined) throw new Error(`記録のファイルがありません: ${path}（作る手順はこのファイルの先頭）`);
+          // 1行ずつ比べて、最初に違う行を示す
+          const a = actual.split('\n');
+          const b = saved.split('\n');
+          const at = a.findIndex((line, i) => line !== b[i]);
+          if (at >= 0 || a.length !== b.length) {
+            const i = at >= 0 ? at : Math.min(a.length, b.length);
+            expect.fail(`${path} の ${i + 1} 行目が記録と違う\n記録: ${b[i] ?? '(なし)'}\n今回: ${a[i] ?? '(なし)'}`);
+          }
+          expect(actual).toBe(saved);
         });
       }
     });
