@@ -2,6 +2,9 @@
   "name": "@chofugo/engine",
   "private": true,
   "type": "module",
+  "volta": {
+    "extends": "../../package.json"
+  },
   "exports": {
     ".": "./src/index.ts"
   },

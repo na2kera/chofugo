@@ -4,3 +4,6 @@ onlyBuiltDependencies:
   - esbuild
   - workerd
   - sharp
+
+# スクリプトの実行に使う Node。pnpm が Volta に Node 20 で登録されていても、こちらが優先される
+useNodeVersion: 22.13.1

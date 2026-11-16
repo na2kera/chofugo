@@ -2,6 +2,9 @@
   "name": "@chofugo/server",
   "private": true,
   "type": "module",
+  "volta": {
+    "extends": "../../package.json"
+  },
   "exports": {
     "./protocol": "./src/protocol.ts"
   },
