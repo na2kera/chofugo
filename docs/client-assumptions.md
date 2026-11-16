@@ -11,7 +11,8 @@
 - **理由**: `wrangler.jsonc` に足すと、server 単体の `wrangler dev`（server のテスト）が「`assets` に `directory` がない」（`The assets property in your configuration is missing the required directory property.`）で起動しなくなった。`directory` を client のビルド先にすると、server のテストが client のビルドに依存してしまう。Vite プラグインでは `directory` をプラグインが入れる（Cloudflare のドキュメントのとおり）。
 
 ### A2. デプロイの経路
-- **仮定**: `pnpm deploy` は client で `vite build` のあと `wrangler deploy` を実行する（ビルドの出力の設定を使う）。`packages/server` で直接 `wrangler deploy` すると画面が含まれないので、README に書いた。デプロイは未実行。
+- **仮定**: `pnpm deploy` は client で `vite build` のあと `wrangler deploy` を実行する（ビルドの出力の設定を使う）。`packages/server` で直接 `wrangler deploy` すると画面が含まれないので、README に書いた。
+- **実行した結果（2026-11-16）**: ユーザーの確認を得て `pnpm run deploy` を実行し、`https://chofugo.na2kera.workers.dev` に公開した。公開先で確かめたこと：ボット4席で5ゲームの試合が最後まで進む／実際の Chrome で1席に入り、名前の入力・ロビー・カードを出す・再読み込みで同じ席に戻る／手番を放置すると時間切れで1枚出される（Cloudflare 上のアラーム）／別のサイトの Origin からの `POST /api/rooms` は 403。確かめていないこと：実際のスマホでの表示と操作、全員不在から30分後にルームが消えること。
 
 ## B. 時間
 
