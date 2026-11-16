@@ -61,12 +61,23 @@ export const DAIFUGO_MODE_DEFAULT_RULES: readonly RuleId[] = [
 
 export type GameCount = 5 | 10 | null; // null = 無制限
 
+// ---------- 特権（その3、design-3 §2.1） ----------
+
+/** 特権6種。並び順は ALL_ABILITY_IDS で固定。 */
+export const ALL_ABILITY_IDS = ['peek', 'steal', 'forceFlush', 'ban', 'revolution', 'skip'] as const;
+export type AbilityId = (typeof ALL_ABILITY_IDS)[number];
+
+/** 連覇したときの枠の閾値（相手3人の残り手札の合計）。0〜14枚で1個、15〜24枚で2個、25枚以上で3個（仮の値、decisions §5.1）。 */
+export const ABILITY_SLOT_THRESHOLDS: readonly number[] = [14, 24];
+
 export type MatchConfig = {
   matchId: string;
   /** 有効にするルール。 */
   rules: RuleId[];
   /** ゲーム数。null は無制限。 */
   gameCount: GameCount;
+  /** 特権あり（超富豪モード）。入力では省略は false。状態の中では必ず boolean。 */
+  abilities?: boolean;
 };
 
 // ---------- 手 ----------
@@ -117,14 +128,15 @@ export type ViolationKind =
   | 'suitLock' // マーク縛り
   | 'sequenceLock' // 激縛り
   | 'openingCard' // ダイヤの3スタートの義務
-  | 'passed'; // パス済み
+  | 'passed' // パス済み
+  | 'ban'; // 独裁で封じられた数字（その3）
 
 export type Violation = { kind: ViolationKind };
 
 // ---------- 待ち ----------
 
-/** choice = 7渡し・10捨ての「手札から選ぶ」待ち。 */
-export type AwaitKind = 'turn' | 'respond' | 'exchangeGive' | 'choice';
+/** choice = 7渡し・10捨ての「手札から選ぶ」待ち。abilitySelect = 特権の選択（その3）。 */
+export type AwaitKind = 'turn' | 'respond' | 'exchangeGive' | 'choice' | 'abilitySelect';
 export type AwaitTimer = 'turn' | 'respond' | 'choice' | 'exchange' | 'ability';
 
 export type Awaiting = {
@@ -132,6 +144,8 @@ export type Awaiting = {
   seat: SeatId;
   kind: AwaitKind;
   timer: AwaitTimer;
+  /** 特権を使って作り直した手番の待ちが、引き継ぐ元の番号（design-3 §6.1）。強制流しのあとの待ちには付けない。 */
+  continues?: number;
 };
 
 // ---------- 効果と中断 ----------
@@ -160,7 +174,7 @@ export type Effect =
   | { type: 'forceLast'; seat: SeatId; reason: 'dethrone' };
 
 /** 場が流れた理由。ルールによるものはルール ID（8切り、スペ3返しなど）。 */
-export type FlushReason = 'allPassed' | 'leaderPassed' | 'returnFailed' | 'jokerUnbeatable' | RuleId;
+export type FlushReason = 'allPassed' | 'leaderPassed' | 'returnFailed' | 'jokerUnbeatable' | 'forceFlush' | RuleId;
 
 /** 返しの一周の途中（再開に必要な情報）。 */
 export type ReturnRoundPending = {
@@ -248,6 +262,26 @@ export type GameState = {
   exchange: ExchangeState | null;
   /** そのゲームの最初の親。 */
   starter: SeatId;
+  /** 特権（その3）。特権のないゲームでは null。 */
+  abilities: AbilityState | null;
+  /** 独裁で封じた数字。場が流れると null。 */
+  ban: Rank | null;
+  /** 透視で見たカード（対象の手札に残っている分だけ）。 */
+  peek: { target: SeatId; cards: CardId[] } | null;
+  /** 最後に革命（の切り替え）を起こした席。 */
+  revolutionBy: SeatId | null;
+  /** 席ごとの、終えた手番の数（カードを出すかパスした回数。CPU の判断に使う）。 */
+  turnCount: number[];
+};
+
+export type AbilityState = {
+  holder: SeatId;
+  slots: number;
+  /** 選んでいる途中の内容。 */
+  draft: AbilityId[];
+  /** 確定した内容。確定前は null。 */
+  chosen: AbilityId[] | null;
+  used: AbilityId[];
 };
 
 export type GameResult = {
@@ -256,10 +290,15 @@ export type GameResult = {
   deltas: number[];
 };
 
-export type MatchPhase = 'exchange' | 'play' | 'gameResult' | 'matchResult';
+export type MatchPhase = 'exchange' | 'ability' | 'play' | 'gameResult' | 'matchResult';
+
+/** 待ちのあるフェーズか（design-3 §6.5）。 */
+export function isAwaitPhase(phase: MatchPhase): boolean {
+  return phase === 'exchange' || phase === 'ability' || phase === 'play';
+}
 
 export type MatchState = {
-  version: 2;
+  version: 3;
   matchId: string;
   config: MatchConfig;
   rng: RngState;
@@ -272,6 +311,8 @@ export type MatchState = {
   results: GameResult[];
   nextAwaitId: number;
   nextEventSeq: number;
+  /** 次のゲームで特権を持つ席と枠の数（ゲームの終わりに決める）。 */
+  abilityGrant: { seat: SeatId; slots: number } | null;
 };
 
 // ---------- 操作 ----------
@@ -286,6 +327,8 @@ export type Action =
       shape?: Shape;
       /** 反則上がりになる手を出すときに true。 */
       confirmFoul?: boolean;
+      /** 特権のスキップを付けて出す（その3）。 */
+      withSkip?: boolean;
     }
   | { type: 'pass'; seat: SeatId; awaitId: number }
   | {
@@ -298,6 +341,10 @@ export type Action =
   | { type: 'exchangeGive'; seat: SeatId; awaitId: number; cards: CardId[] }
   /** 7渡し・10捨てで選ぶ。空の配列 = 渡さない・捨てない。 */
   | { type: 'choose'; seat: SeatId; awaitId: number; cards: CardId[] }
+  /** 特権の選択（confirm: false は途中の保存。待ちは同じ番号のまま残る）。 */
+  | { type: 'selectAbilities'; seat: SeatId; awaitId: number; abilities: AbilityId[]; confirm: boolean }
+  /** 特権を使う（スキップ以外）。 */
+  | { type: 'useAbility'; seat: SeatId; awaitId: number; ability: AbilityId; target?: SeatId; card?: CardId; rank?: Rank }
   | { type: 'auto'; awaitId: number; policy: 'timeout' | 'cpu' }
   | { type: 'nextGame' }
   | { type: 'endMatch' };
@@ -317,7 +364,10 @@ export type ActionErrorCode =
   | 'invalidResponse'
   | 'invalidExchange'
   | 'invalidChoice'
-  | 'notUnlimited';
+  | 'notUnlimited'
+  | 'invalidAbility' // 持っていない、使用済み、選び方が正しくない
+  | 'abilityNotUsable' // いまは使えない（場が空の強制流し、対象が正しくない、義務のカード など）
+  | 'cannotSkip'; // その手にはスキップを付けられない
 
 export type ActionError = {
   code: ActionErrorCode;
@@ -354,6 +404,8 @@ export type LegalPlay = {
   play: Play;
   /** 出すと反則上がりになる。 */
   foul: boolean;
+  /** スキップを付けられる手（本人が未使用のスキップを持つときだけ付く）。 */
+  canSkip?: true;
 };
 
 // ---------- 出来事 ----------
@@ -394,14 +446,31 @@ export type GameEventBody =
   | { type: 'choiceSkip'; seat: SeatId; rule: RuleId }
   /** K スキップで飛ばされた席。 */
   | { type: 'skipped'; by: SeatId; seats: SeatId[] }
+  /** 特権の選択の開始（その3）。 */
+  | { type: 'abilitySelectStart'; seat: SeatId; slots: number }
+  /** 特権の確定。abilities は本人だけ（eventsFor で落とす）。 */
+  | { type: 'abilitiesChosen'; seat: SeatId; count: number; abilities: AbilityId[] }
+  /** 特権の使用。cards（透視で見たカード）、given・taken（強奪で動いたカード）は本人と対象だけ。 */
+  | {
+      type: 'ability';
+      seat: SeatId;
+      ability: AbilityId;
+      target?: SeatId;
+      rank?: Rank;
+      cards?: CardId[];
+      given?: CardId;
+      taken?: CardId;
+    }
   | { type: 'gameEnd'; places: Place[]; deltas: number[]; scores: number[] }
   | { type: 'matchEnd'; standings: Standing[] };
 
 export type GameEvent = EventBase & GameEventBody;
 
 export type VisibleEventBody =
-  | Exclude<GameEventBody, { type: 'deal' } | { type: 'exchange' } | { type: 'give' }>
+  | Exclude<GameEventBody, { type: 'deal' } | { type: 'exchange' } | { type: 'give' } | { type: 'abilitiesChosen' }>
   | { type: 'deal'; counts: number[]; hand: CardId[] }
+  /** abilities は本人だけ。ほかの席には null。 */
+  | { type: 'abilitiesChosen'; seat: SeatId; count: number; abilities: AbilityId[] | null }
   | { type: 'exchange'; from: SeatId; to: SeatId; count: number; cards: CardId[] | null }
   | { type: 'give'; from: SeatId; to: SeatId; count: number; cards: CardId[] | null };
 
@@ -411,8 +480,31 @@ export type Standing = { seat: SeatId; score: number; rank: number };
 
 // ---------- 席から見える状態 ----------
 
+/** 手番で使える（使えるかもしれない）特権。選んで未使用のもの（スキップ以外）を ALL_ABILITY_IDS の順に並べる。 */
+export type UsableAbility = {
+  id: AbilityId;
+  usable: boolean;
+  /** 選べる相手（透視・強奪）。 */
+  targets?: SeatId[];
+  /** 渡せるカード（強奪）。 */
+  cards?: CardId[];
+  /** 封じられる数字（独裁）。 */
+  ranks?: Rank[];
+};
+
 export type MyAwaiting =
-  | { awaitId: number; kind: 'turn'; leader: boolean; plays: LegalPlay[]; canPass: boolean }
+  | {
+      awaitId: number;
+      kind: 'turn';
+      leader: boolean;
+      plays: LegalPlay[];
+      canPass: boolean;
+      /** 使える特権（本人が持ち主のときだけ中身がある）。 */
+      abilities: UsableAbility[];
+      /** 未使用のスキップを持っている。 */
+      skipAvailable: boolean;
+    }
+  | { awaitId: number; kind: 'abilitySelect'; slots: number; draft: AbilityId[] }
   | { awaitId: number; kind: 'respond'; rule: RuleId; plays: LegalPlay[] }
   | {
       awaitId: number;
@@ -456,6 +548,16 @@ export type GameView = {
   /** 自分が渡した・受け取ったカード（交換）。 */
   myExchange: { gave: CardId[]; received: CardId[] } | null;
   starter: SeatId;
+  /** 特権の持ち主と残りの個数（全員に見える。その3）。 */
+  abilities: { holder: SeatId; slots: number; remaining: number; selecting: boolean } | null;
+  /** 自分の特権（持ち主だけ）。 */
+  myAbilities: { chosen: AbilityId[]; used: AbilityId[]; draft: AbilityId[] } | null;
+  /** 独裁で封じられた数字（全員）。 */
+  ban: Rank | null;
+  /** 透視で見たカード（持ち主だけ。対象の手札に残っている分）。 */
+  peek: { target: SeatId; cards: CardId[] } | null;
+  /** 透視で見られた自分のカード（対象だけ。手札に残っている分）。 */
+  peekedMine: CardId[] | null;
 };
 
 export type PlayerView = {

@@ -2,6 +2,7 @@
 
 import { deepClone } from './clone.ts';
 import { exchangeTaskFor } from './exchange.ts';
+import { hasUnused, publicAbilities, usableAbilities } from './abilities.ts';
 import {
   computeStandings,
   isReversed,
@@ -13,6 +14,7 @@ import {
 } from './game.ts';
 import {
   SEATS,
+  isAwaitPhase,
   type GameEvent,
   type GameView,
   type LegalPlay,
@@ -39,13 +41,26 @@ export function legalPlays(state: MatchState, seat: SeatId): LegalPlay[] {
 function myAwaiting(state: MatchState, seat: SeatId): MyAwaiting | null {
   const g = state.game;
   if (g === null) return null;
-  if (state.phase !== 'play' && state.phase !== 'exchange') return null;
+  if (!isAwaitPhase(state.phase)) return null;
   const w = g.awaiting.find((a) => a.seat === seat);
   if (w === undefined) return null;
   if (w.kind === 'turn') {
     const plays = legalPlays(state, seat);
     const leader = topPlay(g) === null;
-    return { awaitId: w.id, kind: 'turn', leader, plays, canPass: !leader || plays.length === 0 };
+    return {
+      awaitId: w.id,
+      kind: 'turn',
+      leader,
+      plays,
+      canPass: !leader || plays.length === 0,
+      abilities: usableAbilities(makeCtx(state), seat),
+      skipAvailable: hasUnused(g, seat, 'skip'),
+    };
+  }
+  if (w.kind === 'abilitySelect') {
+    const a = g.abilities;
+    if (a === null || a.holder !== seat) return null;
+    return { awaitId: w.id, kind: 'abilitySelect', slots: a.slots, draft: a.draft.slice() };
   }
   if (w.kind === 'respond') {
     const p = g.pending;
@@ -125,6 +140,23 @@ export function viewFor(state: MatchState, seat: SeatId): PlayerView {
           : g.exchange.pairs.map((p) => ({ lower: p.lower, upper: p.upper, count: p.count, stage: p.stage })),
       myExchange,
       starter: g.starter,
+      abilities: publicAbilities(g),
+      myAbilities:
+        g.abilities !== null && g.abilities.holder === seat
+          ? {
+              chosen: (g.abilities.chosen ?? []).slice(),
+              used: g.abilities.used.slice(),
+              draft: g.abilities.draft.slice(),
+            }
+          : null,
+      ban: g.ban,
+      // 透視で見たカード: 持ち主には対象の手札に残っている分、対象には自分の手札に残っている分（§17.3）
+      peek:
+        g.peek !== null && g.abilities !== null && g.abilities.holder === seat
+          ? { target: g.peek.target, cards: g.peek.cards.filter((id) => (g.hands[g.peek!.target] ?? []).includes(id)) }
+          : null,
+      peekedMine:
+        g.peek !== null && g.peek.target === seat ? g.peek.cards.filter((id) => (g.hands[seat] ?? []).includes(id)) : null,
     };
   }
   return {
@@ -138,7 +170,7 @@ export function viewFor(state: MatchState, seat: SeatId): PlayerView {
     prevRanks: state.prevRanks === null ? null : state.prevRanks.slice(),
     results: deepClone(state.results),
     game,
-    awaiting: g === null || (state.phase !== 'play' && state.phase !== 'exchange') ? [] : g.awaiting.map((a) => ({ ...a })),
+    awaiting: g === null || !isAwaitPhase(state.phase) ? [] : g.awaiting.map((a) => ({ ...a })),
     mine: myAwaiting(state, seat),
     standings: state.phase === 'matchResult' ? computeStandings(state.scores) : null,
   };
@@ -174,6 +206,28 @@ export function eventsFor(events: readonly GameEvent[], seat: SeatId): VisibleEv
         count: e.cards.length,
         cards: party ? e.cards.slice() : null,
       };
+    }
+    if (e.type === 'abilitiesChosen') {
+      // 選んだ種類は本人だけ。ほかの席には個数だけ（§5.2、design-3 §2.6）
+      return {
+        seq: e.seq,
+        gameNo: e.gameNo,
+        type: 'abilitiesChosen',
+        seat: e.seat,
+        count: e.count,
+        abilities: e.seat === seat ? e.abilities.slice() : null,
+      };
+    }
+    if (e.type === 'ability') {
+      // 透視で見たカード・強奪で動いたカードは、本人と対象だけ。ほかの席からは項目ごと落とす
+      const party = e.seat === seat || e.target === seat;
+      const out = deepClone(e);
+      if (!party) {
+        delete out.cards;
+        delete out.given;
+        delete out.taken;
+      }
+      return out;
     }
     return deepClone(e);
   });

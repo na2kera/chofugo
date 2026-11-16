@@ -2,11 +2,14 @@
 
 import { expect } from 'vitest';
 import {
+  ALL_ABILITY_IDS,
   applyAction,
   awaiting,
   createMatch,
   legalPlays,
   viewFor,
+  type AbilityId,
+  type AbilityState,
   type Action,
   type CardId,
   type GameEvent,
@@ -59,6 +62,10 @@ export type Setup = {
   gameCount?: 5 | 10 | null;
   orderReversed?: boolean;
   openingCard?: CardId;
+  /** 特権（その3）。holder の特権を確定済みの状態で置く。 */
+  abilities?: { holder: SeatId; chosen: AbilityId[]; used?: AbilityId[]; slots?: number };
+  /** 試合の設定の abilities（省略時は abilities の指定があれば true）。 */
+  abilitiesConfig?: boolean;
 };
 
 /** 場面を直接作る（手番 turn の人が親で、場は空）。 */
@@ -85,8 +92,31 @@ export function scene(s: Setup): MatchState {
     firstPlaceHandCounts: null,
     exchange: null,
     starter: s.turn,
+    abilities: null,
+    ban: null,
+    peek: null,
+    revolutionBy: null,
+    turnCount: [0, 0, 0, 0],
   };
-  return { ...base, game, phase: 'play', prevRanks: s.prevRanks ?? null, nextAwaitId: 101 };
+  if (s.abilities !== undefined) {
+    const ab: AbilityState = {
+      holder: s.abilities.holder,
+      slots: s.abilities.slots ?? 3,
+      draft: s.abilities.chosen.slice(),
+      chosen: s.abilities.chosen.slice(),
+      used: (s.abilities.used ?? []).slice(),
+    };
+    game.abilities = ab;
+  }
+  const abilitiesConfig = s.abilitiesConfig ?? s.abilities !== undefined;
+  return {
+    ...base,
+    config: { ...base.config, abilities: abilitiesConfig },
+    game,
+    phase: 'play',
+    prevRanks: s.prevRanks ?? null,
+    nextAwaitId: 101,
+  };
 }
 
 /** 場面を進める小さな道具。失敗したらテストを落とす。 */
@@ -225,7 +255,31 @@ export function randomAction(s: MatchState, rng: RngState): Action {
       confirmFoul: p.foul,
     }));
     if (m.canPass) opts.push({ type: 'pass', seat: w.seat, awaitId: w.id });
+    // 特権（その3）: 持ち主のときだけ候補を足す（特権のない試合では乱数の引き方を変えない）
+    if (m.skipAvailable) {
+      for (const p of m.plays) {
+        if (p.canSkip === true) {
+          opts.push({ type: 'play', seat: w.seat, awaitId: w.id, cards: p.cards, shape: p.shape, confirmFoul: p.foul, withSkip: true });
+        }
+      }
+    }
+    for (const u of m.abilities) {
+      if (!u.usable) continue;
+      const base = { type: 'useAbility' as const, seat: w.seat, awaitId: w.id, ability: u.id };
+      if (u.id === 'peek') opts.push({ ...base, target: pick(rng, u.targets ?? []) });
+      else if (u.id === 'steal') opts.push({ ...base, target: pick(rng, u.targets ?? []), card: pick(rng, u.cards ?? []) });
+      else if (u.id === 'ban') opts.push({ ...base, rank: pick(rng, u.ranks ?? []) });
+      else opts.push(base);
+    }
     return pick(rng, opts);
+  }
+  if (m.kind === 'abilitySelect') {
+    // 0〜枠の数をでたらめに選ぶ。半分の確率で途中の保存（confirm: false）
+    const ids = ALL_ABILITY_IDS.slice();
+    const n = nextInt(rng, Math.min(m.slots, ids.length) + 1);
+    const chosen: AbilityId[] = [];
+    for (let i = 0; i < n; i++) chosen.push(...ids.splice(nextInt(rng, ids.length), 1));
+    return { type: 'selectAbilities', seat: w.seat, awaitId: w.id, abilities: chosen, confirm: nextInt(rng, 2) === 0 };
   }
   if (m.kind === 'respond') {
     const opts: Action[] = m.plays.map((p) => ({ type: 'respond', seat: w.seat, awaitId: w.id, cards: p.cards }));

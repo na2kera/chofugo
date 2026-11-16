@@ -10,6 +10,7 @@ export function isEightGroup(play: Play): boolean {
 
 export const flushOn8: RuleModule = {
   id: 'flush_on_8',
+  mayFlush: (_ctx, play) => isEightGroup(play),
   afterPlay(_ctx, played) {
     if (!isEightGroup(played.play)) return [];
     return [{ type: 'flush', leader: played.seat, reason: 'flush_on_8' }];

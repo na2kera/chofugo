@@ -51,6 +51,8 @@ export type RuleModule = {
   leaderRule?: LeaderRule;
   /** 手札から選ぶ効果（handChoice）を持つルール: 選んだカードの行き先。give = 次の人へ渡す、discard = 捨て札へ。 */
   choiceTarget?: 'give' | 'discard';
+  /** 場を流すかもしれない手か（8切りの8、砂嵐）。特権のスキップを付けられない手の判定に使う（design-3 §2.4）。 */
+  mayFlush?(ctx: RuleCtx, play: Play): boolean;
   /** 出したあとの効果（8切り、革命、J バック、縛りの成立、返しの一周の開始）。 */
   afterPlay?(ctx: RuleCtx, played: FieldPlay, prev: FieldPlay | null): Effect[];
   /** 反則上がりの判定。判定に使う向きは、出す直前のもの（decisions §14.4）。 */

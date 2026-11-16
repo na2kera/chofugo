@@ -8,9 +8,9 @@ import type { RuleCtx, RuleModule } from './types.ts';
 
 const FOURS: readonly CardId[] = ['spade-4', 'heart-4', 'diamond-4', 'club-4'];
 
-/** 省く条件: 本物の4が、捨て札と場に合わせて3枚以上見えている（§6.2、§16.2）。 */
+/** 省く条件: 本物の4が、捨て札と場に合わせて3枚以上見えている（§6.2、§16.2）。独裁で4が封じられているときも（その3）。 */
 function cannotBeReturned(ctx: RuleCtx): boolean {
-  return FOURS.filter((id) => ctx.isPublic(id)).length >= 3;
+  return FOURS.filter((id) => ctx.isPublic(id)).length >= 3 || ctx.game.ban === 4;
 }
 
 function isRealFour(id: CardId): boolean {
