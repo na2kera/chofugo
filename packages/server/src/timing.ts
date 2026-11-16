@@ -69,8 +69,14 @@ export function humanTimerMs(t: Timing, timer: AwaitTimer): number {
  * 指定のないキーは既定値のまま。
  */
 export function parseTimingOverride(v: unknown): Timing | null {
+  const p = parseTimingPatch(v);
+  return p === null ? null : { ...DEFAULT_TIMING, ...p };
+}
+
+/** テスト用の差し替えの一部だけ（test/timing）。検査は parseTimingOverride と同じ。 */
+export function parseTimingPatch(v: unknown): Partial<Timing> | null {
   if (typeof v !== 'object' || v === null || Array.isArray(v)) return null;
-  const out: Timing = { ...DEFAULT_TIMING };
+  const out: Partial<Timing> = {};
   for (const [k, val] of Object.entries(v)) {
     if (!(TIMING_KEYS as string[]).includes(k)) return null;
     const [min, max] = k === 'testAlarmLagMs' ? [0, 60_000] : [10, 3_600_000];

@@ -10,8 +10,11 @@
 //   POST /api/rooms/:id/test/instance で Durable Object のインスタンスの識別子を返す（休止から作り直されたかの確認）
 //   POST /api/rooms/:id/test/check で期限についての検査（design-2 §3.4）で見つかった問題の一覧を返す
 //   POST /api/rooms/:id/test/oldformat で保存している値を古い形式の番号に書き換える（更新をまたいだルームの再現）
+//   POST /api/rooms の本文に { "seed": [a, b, c, d] } を付けて試合の種を固定できる（場面を決まった形で作るため）
+//   POST /api/rooms/:id/test/storage で保存の有無（ルームの値・操作の記録の数・アラーム）を返す（消えたことの確認）
+//   POST /api/rooms/:id/test/timing の本文 { ...秒数 } で、作ったあとのルームの秒数を差し替える（アラームの遅れなど）
 
-import { DEFAULT_TIMING, parseTimingOverride, type Timing } from './timing.ts';
+import { DEFAULT_TIMING, parseTimingOverride, parseTimingPatch, type Timing } from './timing.ts';
 import type { CreateRoomResponse } from './protocol.ts';
 import { originAllowed } from './origin.ts';
 
@@ -71,6 +74,7 @@ function json(body: unknown, status = 200): Response {
 
 async function createRoom(request: Request, env: Env): Promise<Response> {
   let timing: Timing = { ...DEFAULT_TIMING };
+  let seed: [number, number, number, number] | null = null;
   const text = await readBodyLimited(request, MAX_BODY_BYTES);
   if (text === null) return json({ error: 'body too large' }, 413);
   if (text.trim() !== '') {
@@ -84,16 +88,25 @@ async function createRoom(request: Request, env: Env): Promise<Response> {
     const keys = Object.keys(body);
     if (keys.length > 0) {
       // 秒数の差し替えはテストのときだけ受け付ける
-      if (!isTestMode(env) || keys.some((k) => k !== 'timing')) return json({ error: 'unknown fields' }, 400);
-      const t = parseTimingOverride((body as Record<string, unknown>)['timing']);
-      if (t === null) return json({ error: 'invalid timing' }, 400);
-      timing = t;
+      if (!isTestMode(env) || keys.some((k) => k !== 'timing' && k !== 'seed')) return json({ error: 'unknown fields' }, 400);
+      const b = body as Record<string, unknown>;
+      if (b['timing'] !== undefined) {
+        const t = parseTimingOverride(b['timing']);
+        if (t === null) return json({ error: 'invalid timing' }, 400);
+        timing = t;
+      }
+      if (b['seed'] !== undefined) {
+        const v = b['seed'];
+        const ok = Array.isArray(v) && v.length === 4 && v.every((x) => Number.isInteger(x) && x >= 0 && x <= 0xffffffff) && v.some((x) => x !== 0);
+        if (!ok) return json({ error: 'invalid seed' }, 400);
+        seed = v as [number, number, number, number];
+      }
     }
   }
   for (let i = 0; i < 3; i++) {
     const roomId = newRoomId();
     const stub = env.ROOM.getByName(roomId);
-    if (await stub.create(roomId, timing)) {
+    if (await stub.create(roomId, timing, seed)) {
       const res: CreateRoomResponse = { roomId };
       return json(res, 201);
     }
@@ -111,7 +124,7 @@ export default {
         if (!originAllowed(request.headers.get('Origin'), url)) return json({ error: 'forbidden origin' }, 403);
         return await createRoom(request, env);
       }
-      const m = /^\/api\/rooms\/([^/]+)\/(ws|test\/alarm|test\/replay|test\/instance|test\/check|test\/oldformat)$/.exec(path);
+      const m = /^\/api\/rooms\/([^/]+)\/(ws|test\/alarm|test\/replay|test\/instance|test\/check|test\/oldformat|test\/storage|test\/timing)$/.exec(path);
       if (m !== null) {
         const roomId = m[1] ?? '';
         if (!ROOM_ID_RE.test(roomId)) return json({ error: 'room not found' }, 404);
@@ -127,6 +140,19 @@ export default {
         if (m[2] === 'test/instance') return json({ instance: await stub.instance() });
         if (m[2] === 'test/check') return json({ problems: await stub.problems() });
         if (m[2] === 'test/oldformat') return json({ ok: await stub.makeOldFormat() });
+        if (m[2] === 'test/storage') return json(await stub.storageInfo());
+        if (m[2] === 'test/timing') {
+          const text = await readBodyLimited(request, MAX_BODY_BYTES);
+          let body: unknown = null;
+          try {
+            body = text === null ? null : JSON.parse(text);
+          } catch {
+            body = null;
+          }
+          const t = parseTimingPatch(body);
+          if (t === null) return json({ error: 'invalid timing' }, 400);
+          return json({ ok: await stub.patchTiming(t) });
+        }
         const version = await stub.runAlarmNow();
         return json({ version });
       }

@@ -173,6 +173,12 @@ export type StateMessage = {
   deadlines: DeadlineView[];
   /** 送った時点のサーバーの時刻（ミリ秒）。client は自分の時計との差を補正に使う。 */
   serverTime: number;
+  /**
+   * この接続が送った操作（`action`）を engine が受け付けたとき、その操作の reqId（その入力の処理で送る、本人への state だけに付く）。
+   * 拒否された操作・時間切れの自動の操作・他人の操作で進んだ state には付かない。client は「自分の操作が受理された」をこれで見分ける
+   * （7渡しで受け取ったカードの強調を消す時点、design-2 §6.3）。reqId を付けずに送った操作には付かない。
+   */
+  acceptedReqId?: ReqId;
 };
 
 export type ErrorCode =

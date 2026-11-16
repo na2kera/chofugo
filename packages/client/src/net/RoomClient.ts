@@ -300,8 +300,9 @@ export class RoomClient {
   private onState(msg: StateMessage): void {
     this.skew.add(msg.serverTime, Date.now());
     const prev = this.snap.state;
-    // 自分が送った操作の返事を待っている間に届いた state（＝受理された、design-2 §6.3）
-    const ownActionAccepted = this.snap.pending !== null && this.snap.pending.reqId === this.actionReqId;
+    // 自分が送った操作が受理された state（design-2 §6.3）。サーバーは受け付けた操作の reqId を、その入力で送る本人への state に付ける。
+    // 送信待ちの間に届いた state でも、時間切れ・他人の操作で進んだもの（acceptedReqId なし）は受理の証拠にしない（client-assumptions H11）
+    const ownActionAccepted = msg.acceptedReqId !== undefined && this.actionReqId !== null && msg.acceptedReqId === this.actionReqId;
     const patch: Partial<Snapshot> = {
       state: msg,
       offset: this.skew.offset,
@@ -318,6 +319,8 @@ export class RoomClient {
     }
     // 出来事
     const before = this.snap.feed.matchId === msg.matchId ? this.snap.feed.top : null;
+    // 特権のスキップの覚え書き（飛ばす席が別の state で届く場合、client-assumptions I7）。試合が変わったら持ち越さない
+    const skipBefore = this.snap.feed.matchId === msg.matchId ? this.snap.feed.skip : null;
     const { feed, fresh } = ingest(this.snap.feed, msg);
     patch.feed = feed;
     patch.gameResultFirst = nextGameResultFirst(this.snap.gameResultFirst, msg, fresh);
@@ -331,7 +334,7 @@ export class RoomClient {
       ownActionAccepted,
     });
     const names = (seat: SeatId) => seatName(msg.room.seats, seat, msg.seat);
-    const lines = eventLines(fresh, names, msg.seat);
+    const lines = eventLines(fresh, names, msg.seat, skipBefore);
     const reset = msg.eventsFull || (prev !== null && prev.matchId !== msg.matchId);
     if (reset) {
       // 接続・復帰の直後・新しい試合：前のメッセージ・演出は捨て、最新の状態だけを描く

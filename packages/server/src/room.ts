@@ -54,6 +54,8 @@ const ACTIONS_PREFIX = 'actions:';
 /** テスト用：期限についての検査（design-2 §3.4）で見つかった問題の記録。テストのときだけ書く。 */
 const PROBLEMS_KEY = 'test:problems';
 const MAX_PROBLEMS = 50;
+/** テスト用：試合の種を固定する（POST /api/rooms の seed）。本番では書かない。 */
+const SEED_KEY = 'test:seed';
 
 /** 読み込んだ結果。stale = 形式の番号が違う保存済みのルーム（失効と同じ扱い、design-2 §3.3）。 */
 type Loaded = RoomState | 'stale' | null;
@@ -98,6 +100,11 @@ class Tx {
    * 出来事は新しい分だけ（全件ではない）。
    */
   readonly echoFor = new Set<WebSocket>();
+  /**
+   * engine が受け付けた操作（action）の reqId を、送った接続ごとに覚える。その接続に送る state の acceptedReqId に入れる
+   * （client が「自分の操作が受理された」を確実に見分けるため。design-2 §6.3、server-assumptions G9）。
+   */
+  readonly accepted = new Map<WebSocket, ReqId>();
   /** 期限を秒数いっぱいに付け直す席（復帰した本人）。 */
   readonly resetSeats = new Set<SeatId>();
   /** 追記する操作の記録（ゲームの番号ごと）。 */
@@ -220,10 +227,12 @@ export class Room extends DurableObject<Env> {
   // ---------- RPC（Worker から） ----------
 
   /** ルームを作る。すでにあれば false。 */
-  async create(roomId: string, timing: Timing): Promise<boolean> {
+  async create(roomId: string, timing: Timing, seed: [number, number, number, number] | null = null): Promise<boolean> {
     if (this.load() !== null) return false;
     const now = Date.now();
     const s = initialRoom(roomId, now, timing);
+    // テスト用の固定の種（Worker がテストのときだけ渡す）
+    if (seed !== null) this.ctx.storage.kv.put(SEED_KEY, seed);
     const want = nextAlarm(s);
     s.alarmAt = want;
     this.ctx.storage.kv.put(ROOM_KEY, s);
@@ -241,6 +250,30 @@ export class Room extends DurableObject<Env> {
     await this.alarm();
     const s = this.load();
     return s === null || s === 'stale' ? null : s.version;
+  }
+
+  /** テスト用：保存の有無（ルームの値・操作の記録の数・アラーム）。保存が消えたことを確かめる。 */
+  async storageInfo(): Promise<{ room: boolean; actions: number; keys: number; alarm: number | null }> {
+    let actions = 0;
+    let keys = 0;
+    for (const [key] of this.ctx.storage.kv.list()) {
+      keys++;
+      if (key.startsWith(ACTIONS_PREFIX)) actions++;
+    }
+    return { room: this.ctx.storage.kv.get(ROOM_KEY) !== undefined, actions, keys, alarm: await this.ctx.storage.getAlarm() };
+  }
+
+  /** テスト用：作ったあとのルームの秒数を差し替え、アラームを設定し直す。ルームがなければ false。 */
+  async patchTiming(patch: Partial<Timing>): Promise<boolean> {
+    const s = this.load();
+    if (s === null || s === 'stale') return false;
+    s.timing = { ...s.timing, ...patch };
+    const want = nextAlarm(s);
+    s.alarmAt = want;
+    this.ctx.storage.kv.put(ROOM_KEY, s);
+    if (want === null) await this.ctx.storage.deleteAlarm();
+    else await this.ctx.storage.setAlarm(want + s.timing.testAlarmLagMs);
+    return true;
   }
 
   /** テスト用：期限についての検査（design-2 §3.4）で見つかった問題の一覧。 */
@@ -497,6 +530,7 @@ export class Room extends DurableObject<Env> {
       if (a.type === 'play' && a.withSkip !== undefined && action.type === 'play') action.withSkip = a.withSkip;
       const r = this.applyEngine(tx, action);
       if (!r.ok) tx.error(ws, 'actionRejected', r.message, reqId, r.code);
+      else if (reqId !== null) tx.accepted.set(ws, reqId);
       // 選択の途中の保存は、内容が変わらなくても送った人に state を返す（返事が届くまで画面が押せないため、design-3 §6.2）
       else if (a.type === 'selectAbilities') tx.echoFor.add(ws);
       return;
@@ -613,7 +647,9 @@ export class Room extends DurableObject<Env> {
   private startMatch(tx: Tx, rc: { rules: MatchConfig['rules']; gameCount: MatchConfig['gameCount']; abilities: boolean }): boolean {
     const s = tx.s;
     const matchId = randomId(9);
-    const seed = randomSeed();
+    // テストで種を固定したルームは、その種で作る（Worker がテストのときだけ保存する）
+    const fixed = this.isTestMode() ? this.ctx.storage.kv.get<[number, number, number, number]>(SEED_KEY) : undefined;
+    const seed = fixed ?? randomSeed();
     const config = buildMatchConfig(matchId, rc);
     const r = createMatch(config, seed);
     if (!r.ok) return false;
@@ -747,11 +783,14 @@ export class Room extends DurableObject<Env> {
     for (const o of this.openSockets()) {
       if (tx.closes.some((c) => c.ws === o.ws)) continue;
       const full = tx.fullFor.has(o.ws);
-      if (!changed && !full && !tx.echoFor.has(o.ws)) continue;
+      const ack = tx.accepted.get(o.ws);
+      if (!changed && !full && !tx.echoFor.has(o.ws) && ack === undefined) continue;
       if (o.att.seat === null) {
         this.sendTo(o.ws, this.stateFor(s, null, [], true));
       } else if (this.isCurrent(s, o.att)) {
-        this.sendTo(o.ws, this.stateFor(s, o.att.seat, full ? s.eventLog : tx.newEvents, full));
+        const st = this.stateFor(s, o.att.seat, full ? s.eventLog : tx.newEvents, full);
+        if (ack !== undefined) st.acceptedReqId = ack;
+        this.sendTo(o.ws, st);
       }
     }
     for (const d of tx.direct) this.sendTo(d.ws, d.msg);

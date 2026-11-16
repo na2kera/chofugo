@@ -298,9 +298,37 @@ describe('7渡しで受け取ったカードの強調（design-2 §6.3）', () =
     // 他人の操作で届いた state では消えない
     s.receive(state({ view: view(['club-3', 'spade-9']), events: [ev(6, { type: 'pass', seat: 1 })] }));
     expect(client.getSnapshot().gift?.cards).toEqual(['club-3']);
-    // 自分の操作が受理された（返事を待っている間に state が届いた）
+    // 自分の操作が受理された（サーバーがその操作の reqId を acceptedReqId に付けた state）
     expect(client.sendAction({ type: 'pass', awaitId: 8 }, 'pass')).toBe(true);
-    s.receive(state({ view: view(['club-3', 'spade-9']), events: [ev(7, { type: 'pass', seat: 0 })] }));
+    const ok = s.json().at(-1)!['reqId'] as number;
+    s.receive(state({ view: view(['club-3', 'spade-9']), events: [ev(7, { type: 'pass', seat: 0 })], acceptedReqId: ok }));
+    expect(client.getSnapshot().gift).toBeNull();
+  });
+
+  it('強調中に操作を送り、先に処理された時間切れの state が届き、自分の操作は staleAwait で拒否された：消さない（H11）', () => {
+    const s = joined();
+    s.receive(state({ view: view(['club-3', 'spade-9']), events: [giveToMe(5)] }));
+    expect(client.sendAction({ type: 'pass', awaitId: 7 }, 'pass')).toBe(true);
+    const reqId = s.json().at(-1)!['reqId'] as number;
+    // 送信待ちの間に、時間切れの自動の操作で進んだ state が届く（acceptedReqId なし）
+    s.receive(state({ view: view(['club-3', 'spade-9']), events: [ev(6, { type: 'pass', seat: 0 })] }));
+    expect(client.getSnapshot().gift?.cards).toEqual(['club-3']);
+    // 続いて、自分の操作の拒否
+    s.receive({ type: 'error', code: 'actionRejected', message: 'x', reqId, engineError: 'staleAwait' });
+    expect(client.getSnapshot().gift?.cards).toEqual(['club-3']);
+    // ほかの接続（や前の操作）の reqId が付いた state でも消さない
+    s.receive(state({ view: view(['club-3', 'spade-9']), events: [ev(7, { type: 'pass', seat: 1 })], acceptedReqId: reqId + 100 }));
+    expect(client.getSnapshot().gift?.cards).toEqual(['club-3']);
+  });
+
+  it('送信待ちが3秒で解けたあとに届いた、受理の印のある state では消す', () => {
+    const s = joined();
+    s.receive(state({ view: view(['club-3']), events: [giveToMe(5)] }));
+    expect(client.sendAction({ type: 'pass', awaitId: 7 }, 'pass')).toBe(true);
+    const reqId = s.json().at(-1)!['reqId'] as number;
+    vi.advanceTimersByTime(3500);
+    expect(client.getSnapshot().pending).toBeNull();
+    s.receive(state({ view: view(['club-3']), events: [ev(6, { type: 'pass', seat: 0 })], acceptedReqId: reqId }));
     expect(client.getSnapshot().gift).toBeNull();
   });
 
@@ -312,5 +340,18 @@ describe('7渡しで受け取ったカードの強調（design-2 §6.3）', () =
     expect(client.getSnapshot().gift?.cards).toEqual(['club-3']);
     s.receive(state({ view: view(['club-3']), events: [giveToMe(5)], eventsFull: true }));
     expect(client.getSnapshot().gift).toBeNull();
+  });
+});
+
+describe('特権のスキップのメッセージ（client-assumptions I7）', () => {
+  it('飛ばす席が7渡しのあとの別の state で届いても「スキップ！ △△ を飛ばした」（K スキップの言い方にしない）', () => {
+    const s = joined();
+    const g7 = { shape: 'group', cards: ['spade-7'], rank: 7, jokers: [] };
+    s.receive(state({ events: [ev(1, { type: 'play', seat: 1, play: g7, foul: false }), ev(2, { type: 'ability', seat: 1, ability: 'skip' }), ev(3, { type: 'choiceStart', seat: 1, rule: 'give_on_7', max: 1, to: 2 })] }));
+    vi.advanceTimersByTime(2000);
+    expect(client.getSnapshot().line).toBe('スキップ！');
+    s.receive(state({ events: [ev(4, { type: 'give', from: 1, to: 2, count: 1, cards: null }), ev(5, { type: 'skipped', by: 1, seats: [3] })] }));
+    vi.advanceTimersByTime(2000);
+    expect(client.getSnapshot().line).toBe('スキップ！ p3 を飛ばした');
   });
 });

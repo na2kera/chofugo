@@ -546,6 +546,7 @@ function historyFeed(): Feed {
     seen: new Set(),
     gameNo: 3,
     top: null,
+    skip: null,
     history: [
       { seq: 1, seat: 1, cards: ['club-3', 'diamond-3'], via: 'turn' },
       { seq: 2, seat: 2, cards: ['heart-9', 'spade-9'], via: 'turn' },

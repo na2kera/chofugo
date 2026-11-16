@@ -19,10 +19,46 @@ export type Feed = {
   history: HistoryItem[];
   /** 出来事から分かる、いま場のいちばん上の手（演出用。場が流れたら null）。 */
   top: { seat: SeatId; play: Play } | null;
+  /**
+   * 特権のスキップを付けて出したあと、飛ばす席（skipped）がまだ届いていない（試合は matchId、ゲームと出した席はここ）。
+   * 7渡し・10捨ての選択をはさむと skipped は別の state で届くので、受信をまたいで覚える（client-assumptions I7）。
+   */
+  skip: SkipMemo;
 };
 
+/** 特権のスキップの、飛ばす席を待っている覚え書き。 */
+export type SkipMemo = { gameNo: number; seat: SeatId } | null;
+
 export function emptyFeed(): Feed {
-  return { matchId: null, seen: new Set(), gameNo: null, history: [], top: null };
+  return { matchId: null, seen: new Set(), gameNo: null, history: [], top: null, skip: null };
+}
+
+/**
+ * 出来事1つで覚え書きを進める。特権のスキップで覚え、出した席の skipped で使い終える。
+ * 手番が進んだ（play・pass・respond）、場が流れた、ゲームが変わったときは捨てる
+ * （飛ばす人がいなかったスキップの覚え書きが、あとの K スキップに付かないように）。
+ */
+export function nextSkipMemo(memo: SkipMemo, e: VisibleEvent): SkipMemo {
+  let m = memo !== null && memo.gameNo !== e.gameNo ? null : memo;
+  switch (e.type) {
+    case 'ability':
+      if (e.ability === 'skip') m = { gameNo: e.gameNo, seat: e.seat };
+      break;
+    case 'skipped':
+      if (m !== null && e.by === m.seat) m = null;
+      break;
+    case 'play':
+    case 'pass':
+    case 'respond':
+    case 'fieldCleared':
+    case 'gameStart':
+    case 'gameEnd':
+      m = null;
+      break;
+    default:
+      break;
+  }
+  return m;
 }
 
 export type Incoming = { matchId: string | null; events: readonly VisibleEvent[]; eventsFull: boolean };
@@ -41,6 +77,7 @@ export type IngestResult = {
 };
 
 function applyToHistory(feed: Feed, e: VisibleEvent): void {
+  feed.skip = nextSkipMemo(feed.skip, e);
   if (feed.gameNo !== e.gameNo) {
     feed.gameNo = e.gameNo;
     feed.history = [];
@@ -228,23 +265,31 @@ function abilityMessage(e: Extract<VisibleEvent, { type: 'ability' }>, nameOf: N
 
 /**
  * 1回の state で届いた出来事のメッセージの列（design-3 §4.5）。
- * 特権のスキップのあとに飛ばされた席（skipped）が続いたら、「スキップ！ △△ を飛ばした」の1行にまとめる
- * （K スキップと重なったときも、特権のスキップの言い方にする）。
+ * 特権のスキップのあとに、出した席の skipped が続いたら「スキップ！ △△ を飛ばした」にする
+ * （K スキップと重なったときも、特権のスキップの言い方にする）。同じ state なら「スキップ！」の行を置き換えて1行にする。
+ * skip は前の state までの覚え書き（Feed.skip）。7渡し・10捨ての選択をはさんで skipped が別の state で届いたときに使う
+ * （そのときは、前の state で「スキップ！」、この state で「スキップ！ △△ を飛ばした」と出る）。
  */
-export function eventLines(events: readonly VisibleEvent[], nameOf: NameOf, me: SeatId | null = null): string[] {
+export function eventLines(events: readonly VisibleEvent[], nameOf: NameOf, me: SeatId | null = null, skip: SkipMemo = null): string[] {
   const out: string[] = [];
+  let memo = skip;
   let skipAt = -1;
   for (const e of events) {
+    const pending = memo !== null && memo.gameNo === e.gameNo ? memo : null;
+    memo = nextSkipMemo(memo, e);
     if (e.type === 'ability' && e.ability === 'skip') {
       skipAt = out.length;
       out.push('スキップ！');
       continue;
     }
-    if (e.type === 'skipped' && skipAt >= 0 && e.seats.length > 0) {
-      out[skipAt] = `スキップ！ ${e.seats.map((x) => nameOf(x)).join('・')} を飛ばした`;
+    if (e.type === 'skipped' && pending !== null && e.by === pending.seat) {
+      const t = `スキップ！ ${e.seats.map((x) => nameOf(x)).join('・')} を飛ばした`;
+      if (skipAt >= 0) out[skipAt] = t;
+      else out.push(t);
       skipAt = -1;
       continue;
     }
+    if (memo === null) skipAt = -1;
     const t = eventMessage(e, nameOf, me);
     if (t !== null) out.push(t);
   }

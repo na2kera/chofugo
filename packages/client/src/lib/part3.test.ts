@@ -15,7 +15,7 @@ import {
   toggleDraft,
   toggleStealCard,
 } from './abilities.ts';
-import { eventLines, eventMessage } from './events.ts';
+import { emptyFeed, eventLines, eventMessage, ingest, type Feed } from './events.ts';
 import { errorText } from './errors.ts';
 import { pendingAfter } from './pending.ts';
 import { dimReason, DIM_REASON_TEXT, scopedValue, selectionKey, type Scoped } from './selection.ts';
@@ -182,6 +182,71 @@ describe('メッセージ（design-3 §4.5）', () => {
     expect(eventLines([ev({ type: 'skipped', by: 1, seats: [2, 3] }, 1)], nameOf, 0)).toEqual(['K スキップ！ ゆい・CPU 4 を飛ばした']);
     // 飛ばす人がいなかったスキップ
     expect(eventLines([ev({ type: 'ability', seat: 1, ability: 'skip' }, 1)], nameOf, 0)).toEqual(['スキップ！']);
+  });
+
+  it('特権のスキップ：飛ばす席（skipped）が7渡し・10捨てのあとの別の state で届いても「スキップ！ △△ を飛ばした」（I7）', () => {
+    // 受信を1回ずつ ingest に通し、前の state までの覚え書き（Feed.skip）を渡す。RoomClient と同じ流れ
+    const recv = (feed: Feed, events: VisibleEvent[], eventsFull = false) => {
+      const before = feed.skip;
+      const r = ingest(feed, { matchId: 'm1', events, eventsFull });
+      return { feed: r.feed, lines: eventLines(r.fresh, nameOf, 0, before) };
+    };
+    const play7 = ev({ type: 'play', seat: 1, play: g(['spade-7'], 7), foul: false }, 1);
+    const skip = ev({ type: 'ability', seat: 1, ability: 'skip' }, 2);
+    const start = ev({ type: 'choiceStart', seat: 1, rule: 'give_on_7', max: 1, to: 2 }, 3);
+    const give = ev({ type: 'give', from: 1, to: 2, count: 1, cards: null }, 4);
+    const skipped = ev({ type: 'skipped', by: 1, seats: [3] }, 5);
+    // 7渡し：出した state と、渡して飛ばした state が別
+    const a = recv(emptyFeed(), [play7, skip, start]);
+    expect(a.lines).toEqual(['たろう が 7を1枚 出した', 'スキップ！']);
+    expect(a.feed.skip).toEqual({ gameNo: 2, seat: 1 });
+    const b = recv(a.feed, [give, skipped]);
+    expect(b.lines).toEqual(['たろう が ゆい に 1枚 渡した', 'スキップ！ CPU 4 を飛ばした']);
+    expect(b.feed.skip).toBe(null);
+    // 10捨てでも同じ
+    const p10 = ev({ type: 'play', seat: 1, play: g(['spade-10'], 10), foul: false }, 11);
+    const c = recv(b.feed, [p10, { ...skip, seq: 12 } as VisibleEvent, ev({ type: 'choiceStart', seat: 1, rule: 'discard_on_10', max: 1, to: null }, 13)]);
+    expect(c.lines).toEqual(['たろう が 10を1枚 出した', 'スキップ！']);
+    const d = recv(c.feed, [ev({ type: 'choiceSkip', seat: 1, rule: 'discard_on_10' }, 14), ev({ type: 'skipped', by: 1, seats: [2] }, 15)]);
+    expect(d.lines).toEqual(['スキップ！ ゆい を飛ばした']);
+    // 復帰（eventsFull）で覚え書きを作り直し、そのあとに届いた skipped にも使う
+    const full = recv(emptyFeed(), [play7, skip, start], true);
+    expect(full.lines).toEqual([]);
+    expect(recv(full.feed, [give, skipped]).lines).toEqual(['たろう が ゆい に 1枚 渡した', 'スキップ！ CPU 4 を飛ばした']);
+  });
+
+  it('K にスキップを付けたとき：同じ state でも、分かれて届いても、飛ばした全員を「スキップ！」の言い方で（I7）', () => {
+    const recv = (feed: Feed, events: VisibleEvent[]) => {
+      const before = feed.skip;
+      const r = ingest(feed, { matchId: 'm1', events, eventsFull: false });
+      return { feed: r.feed, lines: eventLines(r.fresh, nameOf, 0, before) };
+    };
+    const pk = ev({ type: 'play', seat: 1, play: g(['spade-13'], 13), foul: false }, 1);
+    const skip = ev({ type: 'ability', seat: 1, ability: 'skip' }, 2);
+    const both = ev({ type: 'skipped', by: 1, seats: [2, 3] }, 3);
+    expect(recv(emptyFeed(), [pk, skip, both]).lines).toEqual(['たろう が Kを1枚 出した', 'スキップ！ ゆい・CPU 4 を飛ばした']);
+    const a = recv(emptyFeed(), [pk, skip]);
+    expect(a.lines).toEqual(['たろう が Kを1枚 出した', 'スキップ！']);
+    expect(recv(a.feed, [both]).lines).toEqual(['スキップ！ ゆい・CPU 4 を飛ばした']);
+  });
+
+  it('飛ばす人がいなかった特権のスキップの覚え書きは、手番が進む・ゲームが変わると捨てる（あとの K スキップは K スキップのまま）', () => {
+    const recv = (feed: Feed, events: VisibleEvent[]) => {
+      const before = feed.skip;
+      const r = ingest(feed, { matchId: 'm1', events, eventsFull: false });
+      return { feed: r.feed, lines: eventLines(r.fresh, nameOf, 0, before) };
+    };
+    const a = recv(emptyFeed(), [ev({ type: 'play', seat: 1, play: g(['spade-5'], 5), foul: false }, 1), ev({ type: 'ability', seat: 1, ability: 'skip' }, 2)]);
+    expect(a.feed.skip).not.toBe(null);
+    // 次の人がパスした（skipped は来なかった）
+    const b = recv(a.feed, [ev({ type: 'pass', seat: 2 }, 3)]);
+    expect(b.feed.skip).toBe(null);
+    const k = recv(b.feed, [ev({ type: 'play', seat: 1, play: g(['spade-13'], 13), foul: false }, 4), ev({ type: 'skipped', by: 1, seats: [2] }, 5)]);
+    expect(k.lines).toEqual(['たろう が Kを1枚 出した', 'K スキップ！ ゆい を飛ばした']);
+    // ゲームが変わったら、前のゲームの覚え書きは使わない
+    const c = recv(emptyFeed(), [ev({ type: 'play', seat: 1, play: g(['spade-7'], 7), foul: false }, 1), ev({ type: 'ability', seat: 1, ability: 'skip' }, 2)]);
+    const next = { seq: 9, gameNo: 3, type: 'skipped', by: 1, seats: [2] } as unknown as VisibleEvent;
+    expect(eventLines([next], nameOf, 0, c.feed.skip)).toEqual(['K スキップ！ ゆい を飛ばした']);
   });
 
   it('拒否の文言', () => {
