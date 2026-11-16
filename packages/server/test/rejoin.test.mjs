@@ -1,10 +1,10 @@
 // つなぎ直したときの持ち時間（decisions §18.1）。
 // 猶予の中での復帰は期限を変えない（残りが短ければ1つの待ちにつき1回だけ rejoinMinMs まで延ばす）。
 // 切断とつなぎ直しを何回繰り返しても、手番は最初の期限（＋1回だけの延長）までに時間切れで進む。
-// 代役から戻ったときの「秒数いっぱい」は connection.test.mjs・review.test.mjs で確かめている。
+// 代役から戻ったときは秒数いっぱい（ここと、一時停止中に猶予を過ぎた場合は review.test.mjs）。
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Client, PassiveClient, createRoom, deadlineProblems, sleep, startServer, PORTS } from './helpers.mjs';
+import { Client, PassiveClient, createRoom, deadlineProblems, sleep, startServer, testRoute, PORTS } from './helpers.mjs';
 
 let server;
 beforeAll(async () => {
@@ -176,5 +176,62 @@ describe('猶予の中でつなぎ直したときの期限', () => {
     expect(await deadlineProblems(server.base, roomId)).toEqual([]);
     cur.close();
     B.close();
+  });
+
+  it('代役から戻ったときは秒数いっぱいに付け直す', async () => {
+    const timing = { cpuDelayMs: 30, disconnectGraceMs: 500, rejoinMinMs: 2000, turnMs: 8000, respondMs: 4000, choiceMs: 4000 };
+    const { roomId, A, B, target } = await room(timing);
+    // 代役の操作を遅らせ、代役に切り替わったあとも同じ待ちが残るようにする
+    await testRoute(server.base, roomId, 'timing', { cpuDelayMs: 6000 });
+    A.close();
+    const away = await B.waitState((s) => s.room.seats[0].away === true, 10_000, 'A away');
+    expect(away.view.awaiting.some((a) => a.id === target.awaitId)).toBe(true);
+    const r = await rejoin(roomId, A);
+    const d = r.st.deadlines.find((x) => x.awaitId === target.awaitId);
+    expect(d).toBeDefined();
+    expect(r.st.room.seats[0]).toMatchObject({ connected: true, away: false });
+    expect(d.at - r.st.serverTime).toBeGreaterThan(timing.turnMs - 300);
+    expect(d.at - r.st.serverTime).toBeLessThanOrEqual(timing.turnMs);
+    expect(d.at).toBeGreaterThan(target.at);
+    r.c.close();
+    B.close();
+  });
+});
+
+describe('人間1人のルーム（つなぎ直すたびに全員不在の一時停止をはさむ）', () => {
+  it('心拍が届かずに閉じられる → つなぎ直す、を繰り返しても、手番は時間切れで進む', async () => {
+    const timing = { cpuDelayMs: 30, disconnectGraceMs: 2000, rejoinMinMs: 2000, heartbeatTimeoutMs: 800, heartbeatCheckMs: 200, turnMs: 4000, respondMs: 4000, choiceMs: 4000 };
+    const roomId = await createRoom(server.base, timing);
+    const A = new Client(server.base, roomId, { name: 'A' });
+    await A.connect();
+    A.hello();
+    await A.waitState((s) => s.seat === 0);
+    // 席のない観察用の接続（心拍を送り続ける。人間の接続には数えない。席がないので view はなく、期限の一覧で見る）
+    const O = new Client(server.base, roomId, { name: 'observer' });
+    await O.connect();
+    await O.waitState(() => true);
+    A.send({ type: 'start' });
+    const st = await A.waitState((s) => s.view?.mine?.kind === 'turn', 60_000, 'A turn');
+    const awaitId = st.view.mine.awaitId;
+    await O.waitState((s) => s.deadlines.some((d) => d.awaitId === awaitId), 10_000, 'O sees A turn');
+    let cur = A;
+    cur.stopPing();
+    const codes = [];
+    while (O.state.deadlines.some((d) => d.awaitId === awaitId) && codes.length < 30) {
+      const closed = await cur.waitClosed(10_000);
+      codes.push(closed.code);
+      await sleep(150);
+      const r = await rejoin(roomId, cur, { pingMs: 0 });
+      expect(r.st.room.seats[0].away).toBe(false);
+      cur = r.c;
+    }
+    // 接続していた時間の合計で、最初の4秒（＋1回の延長）を使い切る。つなぐたびに約0.8〜1秒進むので、30回より十分少ない
+    expect(O.state.deadlines.some((d) => d.awaitId === awaitId)).toBe(false);
+    expect(codes.length).toBeGreaterThanOrEqual(2);
+    expect(codes.length).toBeLessThan(30);
+    expect(codes.every((c) => c === 4000)).toBe(true);
+    expect(await deadlineProblems(server.base, roomId)).toEqual([]);
+    cur.close();
+    O.close();
   });
 });
