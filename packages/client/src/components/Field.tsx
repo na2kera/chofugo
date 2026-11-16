@@ -1,7 +1,7 @@
 // 場（design-client §4.5、§7.4、§7.5）。いちばん上に出ている手のカードと、発動中の状態の札だけ。
 // 強さが逆のとき（game.reversed）は枠を赤にする。ジョーカーには何の代わりかを小さく添える。
 
-import type { Play, SeatId, Suit } from '@chofugo/engine';
+import type { Play, Rank, SeatId, Suit } from '@chofugo/engine';
 import { jokerStandIn, isRedSuit } from '../lib/cards.ts';
 import { fieldLayout, ROW_STEP } from '../lib/layout.ts';
 import { SUIT_GLYPHS_SMALL } from '../pixel/patterns.ts';
@@ -18,6 +18,10 @@ type Props = {
   tempReverse: boolean;
   reversed: boolean;
   suitLock: Suit[] | null;
+  /** 激縛り（その2）。マークを添えて札を出す。 */
+  seqLock?: { suits: Suit[]; rank: Rank } | null;
+  /** 9リバース中（その2）。「逆回り」の札を出す。 */
+  orderReversed?: boolean;
   motion: FieldMotion;
   /** 演出の識別（同じ手でも演出をやり直すため）。 */
   motionKey?: string;
@@ -26,7 +30,21 @@ type Props = {
   owner?: SeatId | null;
 };
 
-export function Field({ play, revolution, tempReverse, reversed, suitLock, motion, motionKey, note }: Props) {
+const SUIT_READ: Record<Suit, string> = { spade: 'スペード', heart: 'ハート', diamond: 'ダイヤ', club: 'クラブ' };
+
+/** マークつきの札（縛り・激縛り）。 */
+function LockPlate({ label, suits }: { label: string; suits: Suit[] }) {
+  return (
+    <span className={`f win hi ${s.state}`} aria-label={`${label} ${suits.map((x) => SUIT_READ[x]).join('と')}`}>
+      <span aria-hidden="true">{label}</span>
+      {suits.map((x) => (
+        <Pixel key={x} rows={SUIT_GLYPHS_SMALL[x]} unit={2} color={isRedSuit(x) ? 'var(--red-text)' : 'currentColor'} />
+      ))}
+    </span>
+  );
+}
+
+export function Field({ play, revolution, tempReverse, reversed, suitLock, seqLock = null, orderReversed = false, motion, motionKey, note }: Props) {
   const [ref, width] = useWidth<HTMLDivElement>(340);
   const cards = play?.cards ?? [];
   const lay = fieldLayout(cards.length, width);
@@ -40,18 +58,13 @@ export function Field({ play, revolution, tempReverse, reversed, suitLock, motio
     motion === null ? '' : motion.kind === 'out' ? s.out : motion.from === 'me' ? s.inMe : [s.inLeft, s.inCenter, s.inRight][motion.from];
   return (
     <div className={`f ${reversed ? s.frameRed : s.frame} ${s.field}`}>
-      {(revolution || tempReverse || suitLock !== null) && (
+      {(revolution || tempReverse || suitLock !== null || seqLock !== null || orderReversed) && (
         <div className={s.states}>
           {revolution && <span className={`f red redt ${s.state}`}>革命中</span>}
           {tempReverse && <span className={`f red redt ${s.state}`}>J バック中</span>}
-          {suitLock !== null && (
-            <span className={`f win hi ${s.state}`} aria-label={`縛り ${suitLock.map((x) => ({ spade: 'スペード', heart: 'ハート', diamond: 'ダイヤ', club: 'クラブ' })[x]).join('と')}`}>
-              <span aria-hidden="true">縛り</span>
-              {suitLock.map((x) => (
-                <Pixel key={x} rows={SUIT_GLYPHS_SMALL[x]} unit={2} color={isRedSuit(x) ? 'var(--red-text)' : 'currentColor'} />
-              ))}
-            </span>
-          )}
+          {suitLock !== null && <LockPlate label="縛り" suits={suitLock} />}
+          {seqLock !== null && <LockPlate label="激縛り" suits={seqLock.suits} />}
+          {orderReversed && <span className={`f win hi ${s.state}`}>逆回り</span>}
         </div>
       )}
       <div ref={ref} className={s.area}>

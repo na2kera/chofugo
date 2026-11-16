@@ -2,8 +2,8 @@
 // 画像で確かめるために使う（design-client §6、§7.12）。
 
 import type { CardId, SeatId } from '@chofugo/engine';
-import { DAIFUGO_MODE_DEFAULT_RULES } from '@chofugo/engine';
-import type { StateMessage } from '@chofugo/server/protocol';
+import { ALL_RULE_IDS, DAIFUGO_MODE_DEFAULT_RULES, type RuleId } from '@chofugo/engine';
+import type { GameMode, StateMessage } from '@chofugo/server/protocol';
 import type { Anim, Feed } from '../lib/events.ts';
 import type { PlayStep } from '../lib/selection.ts';
 import type { Snapshot } from '../net/RoomClient.ts';
@@ -236,6 +236,139 @@ function resultState(final: boolean, host = true): StateMessage {
   });
 }
 
+// ---------- その2（カスタムモード）の場面 ----------
+
+const CUSTOM_RULES: RuleId[] = [...ALL_RULE_IDS];
+
+/** 7渡し・10捨ての選択（選ぶ本人）。 */
+function choiceMine(rule: 'give_on_7' | 'discard_on_10'): StateMessage {
+  return stateMsg({
+    view: playerView({
+      rules: CUSTOM_RULES,
+      game: gameView({
+        hand: HAND12.slice(0, 10),
+        handCounts: [10, 6, 9, 7],
+        field: [{ seat: 0, play: group(rule === 'give_on_7' ? ['spade-7', 'heart-7'] : ['spade-10', 'heart-10'], rule === 'give_on_7' ? 7 : 10), via: 'turn' }],
+        lastPlayer: 0,
+        choice: { rule, seat: 0, to: rule === 'give_on_7' ? 1 : null },
+      }),
+      awaiting: [{ id: 70, seat: 0, kind: 'choice', timer: 'choice' }],
+      mine: { awaitId: 70, kind: 'choice', rule, max: 2, to: rule === 'give_on_7' ? 1 : null },
+    }),
+    deadlines: [deadline(0, 'choice', 11_000, 70)],
+  });
+}
+
+/** ほかの人が選んでいる。 */
+function choiceOther(): StateMessage {
+  return stateMsg({
+    view: playerView({
+      rules: CUSTOM_RULES,
+      game: gameView({
+        hand: HAND12,
+        handCounts: [12, 4, 9, 7],
+        field: [{ seat: 2, play: group(['club-7'], 7), via: 'turn' }],
+        lastPlayer: 2,
+        choice: { rule: 'give_on_7', seat: 2, to: 3 },
+      }),
+      awaiting: [{ id: 71, seat: 2, kind: 'choice', timer: 'choice' }],
+      mine: null,
+    }),
+    deadlines: [deadline(2, 'choice', 9_000, 71)],
+  });
+}
+
+/** 4止めの返し。fours = 手札の4の数（3枚なら組み合わせが3つ）。 */
+function fourStop(fours: 2 | 3): StateMessage {
+  const all = ['spade-4', 'heart-4', 'club-4'].slice(0, fours);
+  const plays = [];
+  for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) plays.push(legal(group([all[i]!, all[j]!], 4)));
+  const hand: CardId[] = ['club-3', ...all, 'spade-6', 'heart-7', 'diamond-9', 'club-10', 'spade-11', 'heart-13', 'joker-0'];
+  return stateMsg({
+    view: playerView({
+      rules: CUSTOM_RULES,
+      game: gameView({
+        hand,
+        handCounts: [hand.length, 6, 9, 7],
+        field: [{ seat: 3, play: group(['spade-8', 'diamond-8'], 8), via: 'turn' }],
+        lastPlayer: 3,
+        returnRound: { rule: 'block_flush_with_4', source: 3, asking: 0 },
+      }),
+      awaiting: [{ id: 72, seat: 0, kind: 'respond', timer: 'respond' }],
+      mine: { awaitId: 72, kind: 'respond', rule: 'block_flush_with_4', plays },
+    }),
+    deadlines: [deadline(0, 'respond', 7_000, 72)],
+  });
+}
+
+/** 発動中の札がたくさん出ている場（革命・J バック・縛り・激縛り・逆回り）。 */
+function badges(): StateMessage {
+  return stateMsg({
+    view: playerView({
+      rules: CUSTOM_RULES,
+      game: gameView({
+        hand: HAND12,
+        handCounts: [12, 5, 9, 7],
+        field: [{ seat: 1, play: group(['heart-6', 'diamond-6'], 6), via: 'turn' }],
+        lastPlayer: 1,
+        revolution: true,
+        tempReverse: true,
+        reversed: false,
+        suitLock: ['heart', 'diamond'],
+        seqLock: { suits: ['heart', 'diamond'], rank: 6 as never },
+        orderReversed: true,
+        direction: -1,
+      }),
+      awaiting: [{ id: 73, seat: 2, kind: 'turn', timer: 'turn' }],
+      mine: null,
+    }),
+    deadlines: [deadline(2, 'turn', 20_000, 73)],
+  });
+}
+
+/** ダイヤの3スタートの最初の1手。 */
+function opening(): StateMessage {
+  const hand: CardId[] = ['diamond-3', 'club-3', 'heart-5', 'spade-6', 'heart-7', 'diamond-8', 'club-10', 'spade-11', 'heart-12', 'club-13', 'spade-14', 'heart-15', 'joker-0'];
+  return stateMsg({
+    view: playerView({
+      rules: CUSTOM_RULES,
+      gameNo: 1,
+      prevRanks: null,
+      game: gameView({ hand, handCounts: [13, 14, 13, 14], openingCard: 'diamond-3', starter: 0 }),
+      awaiting: [{ id: 74, seat: 0, kind: 'turn', timer: 'turn' }],
+      mine: {
+        awaitId: 74,
+        kind: 'turn',
+        leader: true,
+        canPass: false,
+        plays: [legal(group(['diamond-3'], 3)), legal(group(['diamond-3', 'club-3'], 3)), legal(group(['diamond-3', 'joker-0'], 3, [{ card: 'joker-0', rank: 3, suit: null }]))],
+      },
+    }),
+    deadlines: [deadline(0, 'turn', 27_000, 74)],
+  });
+}
+
+/** 7渡しで受け取ったカードの強調（自分の番）。 */
+function gifted(): StateMessage {
+  const st = theirTurn();
+  const view = st.view!;
+  return {
+    ...st,
+    view: {
+      ...view,
+      rules: CUSTOM_RULES,
+      awaiting: [{ id: 75, seat: 0, kind: 'turn', timer: 'turn' }],
+      mine: { awaitId: 75, kind: 'turn', leader: false, canPass: true, plays: [legal(group(['spade-11'], 11)), legal(group(['heart-13'], 13)), legal(group(['club-14'], 14))] },
+    },
+    deadlines: [deadline(0, 'turn', 24_000, 75)],
+  };
+}
+
+function lobbyCustom(host: boolean, rules: RuleId[], mode: GameMode = 'custom'): StateMessage {
+  const st = lobby(host);
+  return { ...st, room: { ...st.room, config: { mode, rules, gameCount: 5 } } };
+}
+
 function lobby(host: boolean, names?: [string, string, string, string]): StateMessage {
   return stateMsg({
     view: null,
@@ -246,7 +379,7 @@ function lobby(host: boolean, names?: [string, string, string, string]): StateMe
       phase: 'lobby',
       seats: seats(names ?? ['なつき', 'たろう', 'ゆい', ''], ['human', 'human', 'human', 'empty']),
       host: 0,
-      config: { rules: [...DAIFUGO_MODE_DEFAULT_RULES], gameCount: 5 },
+      config: { mode: 'daifugo', rules: [...DAIFUGO_MODE_DEFAULT_RULES], gameCount: 5 },
       paused: false,
     },
   });
@@ -267,11 +400,11 @@ function historyFeed(): Feed {
     gameNo: 3,
     top: null,
     history: [
-      { seq: 1, seat: 1, play: group(['club-3', 'diamond-3'], 3), via: 'turn' },
-      { seq: 2, seat: 2, play: group(['heart-9', 'spade-9'], 9), via: 'turn' },
-      { seq: 3, seat: 3, play: run(['heart-4', 'heart-5', 'heart-6'], 'heart', 4, 6), via: 'turn' },
-      { seq: 4, seat: 0, play: group(['joker-0'], null), via: 'turn' },
-      { seq: 5, seat: 1, play: group(['spade-3'], 3), via: 'respond' },
+      { seq: 1, seat: 1, cards: ['club-3', 'diamond-3'], via: 'turn' },
+      { seq: 2, seat: 2, cards: ['heart-9', 'spade-9'], via: 'turn' },
+      { seq: 3, seat: 3, cards: ['heart-4', 'heart-5', 'heart-6'], via: 'turn' },
+      { seq: 4, seat: 0, cards: ['joker-0'], via: 'turn' },
+      { seq: 5, seat: 1, cards: ['spade-3'], via: 'respond' },
     ],
   };
 }
@@ -422,6 +555,114 @@ const SCENES: Record<string, Scene> = {
   connecting: { title: '接続中', render: () => <RoomBody snap={snapOf(null, { status: 'connecting', joinStage: 'joining', ready: false })} api={noopApi} /> },
   gaveup: { title: 'つながらない', render: () => <RoomBody snap={snapOf(null, { status: 'gaveUp', ready: false })} api={noopApi} /> },
   replaced: { title: '別の画面で開かれた', render: () => <RoomBody snap={snapOf(null, { status: 'replaced', ready: false })} api={noopApi} /> },
+  // ---------- その2 ----------
+  'lobby-custom': {
+    title: 'ロビー（カスタム・ホスト）',
+    render: () => {
+      const st = lobbyCustom(true, [...DAIFUGO_MODE_DEFAULT_RULES, 'block_flush_with_4', 'give_on_7', 'discard_on_10', 'skip_on_k']);
+      return <Lobby state={st} snap={withSnap(st)} api={noopApi} />;
+    },
+  },
+  'lobby-custom-all': {
+    title: 'ロビー（カスタム・全部 ON、説明を開いた）',
+    render: () => {
+      const st = lobbyCustom(true, CUSTOM_RULES);
+      return <Lobby state={st} snap={withSnap(st)} api={noopApi} initialOpen="diamond3_start" />;
+    },
+  },
+  'lobby-custom-locked': {
+    title: 'ロビー（カスタム・8切りが OFF で4止めを押せない）',
+    render: () => {
+      const st = lobbyCustom(true, ['revolution', 'runs', 'give_on_7']);
+      return <Lobby state={st} snap={withSnap(st)} api={noopApi} />;
+    },
+  },
+  'lobby-custom-guest': {
+    title: 'ロビー（カスタム・ホスト以外）',
+    render: () => {
+      const st = lobbyCustom(false, [...DAIFUGO_MODE_DEFAULT_RULES, 'sequence_lock', 'triple3_trump']);
+      return <Lobby state={st} snap={withSnap(st)} api={noopApi} />;
+    },
+  },
+  'play-give': {
+    title: '対戦（7渡しの選択）',
+    render: () => {
+      const st = choiceMine('give_on_7');
+      return <Table state={st} snap={withSnap(st)} api={noopApi} fixedNow={NOW} initialSelected={['club-3', 'diamond-4']} />;
+    },
+  },
+  'play-discard': {
+    title: '対戦（10捨ての選択・0枚）',
+    render: () => {
+      const st = choiceMine('discard_on_10');
+      return <Table state={st} snap={withSnap(st)} api={noopApi} fixedNow={NOW} />;
+    },
+  },
+  'play-choosing-other': {
+    title: '対戦（ほかの人が7渡しを選んでいる）',
+    render: () => {
+      const st = choiceOther();
+      return <Table state={st} snap={withSnap(st)} api={noopApi} fixedNow={NOW} />;
+    },
+  },
+  'play-4stop': {
+    title: '対戦（4止めの返し・4が3枚で選ぶ）',
+    render: () => {
+      const st = fourStop(3);
+      return <Table state={st} snap={withSnap(st)} api={noopApi} fixedNow={NOW} initialSelected={['spade-4']} />;
+    },
+  },
+  'play-4stop-one': {
+    title: '対戦（4止めの返し・候補が1つ）',
+    render: () => {
+      const st = fourStop(2);
+      return <Table state={st} snap={withSnap(st)} api={noopApi} fixedNow={NOW} />;
+    },
+  },
+  'play-badges': {
+    title: '対戦（札が5つ：革命・J バック・縛り・激縛り・逆回り）',
+    render: () => {
+      const st = badges();
+      return <Table state={st} snap={withSnap(st, { line: '激縛り！' })} api={noopApi} fixedNow={NOW} />;
+    },
+  },
+  'play-opening': {
+    title: '対戦（ダイヤの3スタートの最初の1手）',
+    render: () => {
+      const st = opening();
+      return <Table state={st} snap={withSnap(st)} api={noopApi} fixedNow={NOW} />;
+    },
+  },
+  'play-gift': {
+    title: '対戦（7渡しで受け取ったカード）',
+    render: () => {
+      const st = gifted();
+      return <Table state={st} snap={withSnap(st, { line: 'たろう から 2枚 受け取った', gift: { matchId: 'm1', gameNo: 3, cards: ['spade-11', 'heart-13'] } })} api={noopApi} fixedNow={NOW} />;
+    },
+  },
+  'play-menu-discard': {
+    title: 'メニュー（出たカード・10捨てと4止めを含む）',
+    render: () => {
+      const st = theirTurn();
+      const feed: Feed = {
+        ...historyFeed(),
+        history: [
+          { seq: 1, seat: 1, cards: ['club-10', 'diamond-10'], via: 'turn' },
+          { seq: 2, seat: 1, cards: ['club-3', 'heart-5'], via: 'discard' },
+          { seq: 3, seat: 2, cards: ['spade-8'], via: 'turn' },
+          { seq: 4, seat: 3, cards: ['spade-4', 'heart-4'], via: 'respond' },
+        ],
+      };
+      return <Menu state={st} feed={feed} onClose={() => {}} onLeave={() => {}} initial="history" />;
+    },
+  },
+  'play-menu-rules16': {
+    title: 'メニュー（この試合のルール・16種）',
+    render: () => {
+      const st = stateMsg({ view: playerView({ rules: CUSTOM_RULES }), room: { ...theirTurn().room, config: { mode: 'custom', rules: CUSTOM_RULES, gameCount: 5 } } });
+      return <Menu state={st} feed={historyFeed()} onClose={() => {}} onLeave={() => {}} initial="rules" />;
+    },
+  },
 };
 
 

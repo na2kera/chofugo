@@ -1,7 +1,7 @@
 // 手の選び方（design-client §4.6、§7.1、§7.5）。
 // 出せる手の判定はしない。サーバーから届いた `view.mine.plays`（出せる手の一覧）だけを使う。
 
-import type { CardId, LegalPlay, MyAwaiting, Suit } from '@chofugo/engine';
+import type { CardId, LegalPlay, MyAwaiting, Rank, Suit } from '@chofugo/engine';
 import { faceOf } from './cards.ts';
 
 function sameSet(a: readonly CardId[], b: readonly CardId[]): boolean {
@@ -75,11 +75,13 @@ export function afterShapeChosen(play: LegalPlay): PlayStep {
   return play.foul ? { kind: 'confirmFoul', play } : { kind: 'send', play };
 }
 
-export type DimReason = 'notYourTurn' | 'suitLock' | 'cannotCombine' | 'weaker';
+export type DimReason = 'notYourTurn' | 'suitLock' | 'seqLock' | 'opening' | 'cannotCombine' | 'weaker';
 
 export const DIM_REASON_TEXT: Record<DimReason, string> = {
   notYourTurn: 'いまは自分の番ではない',
   suitLock: '縛りのマークに合わない',
+  seqLock: '激縛りの続きに合わない',
+  opening: '最初の1手にはダイヤの3が必要',
   cannotCombine: '選んだカードと組み合わせられない',
   weaker: '場のカードより弱いか、枚数・種類が合わない',
 };
@@ -88,8 +90,11 @@ export const DIM_REASON_TEXT: Record<DimReason, string> = {
  * 暗いカードを押したときの理由（design-client §7.5）。画面の側で大まかに決める。
  * - 自分の待ちがない → 自分の番ではない
  * - 何か選んでいて、そのカード単独なら出せる手に含まれる → 組み合わせられない
+ * - 手番で、ダイヤの3の義務がある → 最初の1手にはダイヤの3が必要（design-2 §4.5）
+ * - 手番で、激縛りが発動している → 激縛りの続きに合わない（design-2 §4.5）
  * - 縛りがあり、そのカードのマークが縛りのマークにない → 縛りに合わない
  * - それ以外 → 弱いか、枚数・種類が合わない
+ * extra はその2で足した状態（省略すると、その1と同じ判定）。
  */
 export function dimReason(
   mine: MyAwaiting | null,
@@ -97,12 +102,26 @@ export function dimReason(
   selected: readonly CardId[],
   card: CardId,
   suitLock: readonly Suit[] | null,
+  extra: { seqLock?: { suits: Suit[]; rank: Rank } | null; openingCard?: CardId | null } = {},
 ): DimReason {
-  if (mine === null || mine.kind === 'exchangeGive') return 'notYourTurn';
+  if (mine === null || mine.kind === 'exchangeGive' || mine.kind === 'choice') return 'notYourTurn';
   if (selected.length > 0 && plays.some((p) => p.cards.includes(card))) return 'cannotCombine';
+  if (mine.kind === 'turn' && (extra.openingCard ?? null) !== null && card !== extra.openingCard) return 'opening';
+  if (mine.kind === 'turn' && (extra.seqLock ?? null) !== null) return 'seqLock';
   const f = faceOf(card);
+  // 4止めの返しは縛りを無視するので、縛りを理由にしない
+  if (mine.kind === 'respond' && mine.rule === 'block_flush_with_4') return 'weaker';
   if (suitLock !== null && f !== null && f.kind === 'normal' && !suitLock.includes(f.suit)) return 'suitLock';
   return 'weaker';
+}
+
+/**
+ * 返しの一周の最初の選択（design-2 §4.3）。返せる組み合わせが1つだけなら、はじめから選んだ状態にする。
+ * 2つ以上（4を3枚以上持っている4止め）なら、手札の4から2枚を選ばせる（空から始める）。
+ */
+export function initialRespondSelection(mine: MyAwaiting | null): CardId[] {
+  if (mine === null || mine.kind !== 'respond' || mine.plays.length !== 1) return [];
+  return mine.plays[0]!.cards.slice();
 }
 
 /** 選択と確認の寿命の鍵（design-client §7.1）。試合・ゲーム・待ちのどれかが変わったら別の鍵になる。 */

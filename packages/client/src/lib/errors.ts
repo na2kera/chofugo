@@ -23,6 +23,8 @@ export function errorText(e: Pick<ErrorMessage, 'code' | 'engineError'>): string
           return '組か階段かを選んでください';
         case 'invalidExchange':
           return 'そのカードは渡せない';
+        case 'invalidChoice':
+          return 'そのカードは選べない';
         default:
           return 'その操作はできなかった';
       }

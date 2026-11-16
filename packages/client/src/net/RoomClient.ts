@@ -9,6 +9,7 @@ import { backoffMs, closeOutcome, PING_MS, shouldGiveUp, SILENCE_MS } from '../l
 import { ClockSkew } from '../lib/timer.ts';
 import { getSavedName, getToken, isKnownRoom, rememberRoom, saveName } from '../lib/storage.ts';
 import { errorText } from '../lib/errors.ts';
+import { nextGift, type Gift } from '../lib/choice.ts';
 import { seatName } from '../lib/seats.ts';
 
 export type ConnStatus =
@@ -45,6 +46,8 @@ export type Snapshot = {
    * NOTICE_MS たつと消える。
    */
   notice: string | null;
+  /** 7渡しで受け取ったカードの強調（design-2 §6.3）。交換で受け取ったカードとは別に持つ。 */
+  gift: Gift;
 };
 
 const MESSAGE_STEP_MS = 600;
@@ -102,6 +105,8 @@ export class RoomClient {
   private openedThisSocket = false;
   private helloSentThisSocket = false;
   private reqId = 0;
+  /** 返事を待っている操作（action）の reqId。設定・開始などのホストの操作と見分ける（design-2 §6.3）。 */
+  private actionReqId: number | null = null;
   private skew = new ClockSkew();
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private silenceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -134,6 +139,7 @@ export class RoomClient {
       gameResultFirst: new Set(),
       joinError: null,
       notice: null,
+      gift: null,
     };
   }
 
@@ -294,6 +300,8 @@ export class RoomClient {
   private onState(msg: StateMessage): void {
     this.skew.add(msg.serverTime, Date.now());
     const prev = this.snap.state;
+    // 自分が送った操作の返事を待っている間に届いた state（＝受理された、design-2 §6.3）
+    const ownActionAccepted = this.snap.pending !== null && this.snap.pending.reqId === this.actionReqId;
     const patch: Partial<Snapshot> = {
       state: msg,
       offset: this.skew.offset,
@@ -313,10 +321,19 @@ export class RoomClient {
     const { feed, fresh } = ingest(this.snap.feed, msg);
     patch.feed = feed;
     patch.gameResultFirst = nextGameResultFirst(this.snap.gameResultFirst, msg, fresh);
+    patch.gift = nextGift(this.snap.gift, {
+      matchId: msg.matchId,
+      gameNo: msg.view?.gameNo ?? null,
+      me: msg.seat,
+      fresh,
+      eventsFull: msg.eventsFull,
+      hand: msg.view?.game?.hand ?? [],
+      ownActionAccepted,
+    });
     const names = (seat: SeatId) => seatName(msg.room.seats, seat, msg.seat);
     const lines: string[] = [];
     for (const e of fresh) {
-      const t = eventMessage(e, names);
+      const t = eventMessage(e, names, msg.seat);
       if (t !== null) lines.push(t);
     }
     const reset = msg.eventsFull || (prev !== null && prev.matchId !== msg.matchId);
@@ -469,7 +486,9 @@ export class RoomClient {
   sendAction(action: ClientAction, what: string): boolean {
     const matchId = this.snap.state?.matchId;
     if (matchId === null || matchId === undefined) return false;
-    return this.send({ type: 'action', matchId, action }, what);
+    const ok = this.send({ type: 'action', matchId, action }, what);
+    if (ok) this.actionReqId = this.reqId;
+    return ok;
   }
 
   /** 最後のゲームの結果から試合の結果へ（自分の画面だけ。サーバーには送らない）。 */

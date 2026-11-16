@@ -2,10 +2,14 @@
 // 通し番号で重複を除き、メッセージと演出に回す。出たカードの履歴もここでためる。
 // 出来事の種類ごとのメッセージと演出は、下の2つの関数（表）で決める。種類は engine の VisibleEvent が正。
 
-import type { FieldPlay, Play, SeatId, VisibleEvent } from '@chofugo/engine';
+import type { CardId, Play, SeatId, VisibleEvent } from '@chofugo/engine';
 import { playSummary } from './cards.ts';
 
-export type HistoryItem = { seq: number; seat: SeatId; play: Play; via: FieldPlay['via'] };
+/**
+ * 出たカードの履歴の1行。turn = 手番で出した手、respond = 返しの一周で返した手（4止めの4を含む）、
+ * discard = 10捨てで捨てたカード（「10捨て」と添える、design-2 §4.5）。
+ */
+export type HistoryItem = { seq: number; seat: SeatId; cards: CardId[]; via: 'turn' | 'respond' | 'discard' };
 
 export type Feed = {
   matchId: string | null;
@@ -43,11 +47,14 @@ function applyToHistory(feed: Feed, e: VisibleEvent): void {
     feed.top = null;
   }
   if (e.type === 'play') {
-    feed.history.push({ seq: e.seq, seat: e.seat, play: e.play, via: 'turn' });
+    feed.history.push({ seq: e.seq, seat: e.seat, cards: e.play.cards, via: 'turn' });
     feed.top = { seat: e.seat, play: e.play };
   } else if (e.type === 'respond') {
-    feed.history.push({ seq: e.seq, seat: e.seat, play: e.play, via: 'respond' });
-    feed.top = { seat: e.seat, play: e.play };
+    feed.history.push({ seq: e.seq, seat: e.seat, cards: e.play.cards, via: 'respond' });
+    // 4止め（toDiscard）の4は捨て札へ置かれ、場のいちばん上は8のまま（design-2 §6.2）
+    if (e.toDiscard !== true) feed.top = { seat: e.seat, play: e.play };
+  } else if (e.type === 'discard') {
+    feed.history.push({ seq: e.seq, seat: e.seat, cards: e.cards, via: 'discard' });
   } else if (e.type === 'fieldCleared' || e.type === 'gameStart') {
     feed.top = null;
   }
@@ -87,7 +94,12 @@ export function animsFor(before: Feed['top'], fresh: readonly VisibleEvent[]): A
   for (const e of fresh) {
     switch (e.type) {
       case 'play':
+        out.push({ kind: 'play', seq: e.seq, seat: e.seat, play: e.play });
+        top = { seat: e.seat, play: e.play };
+        break;
       case 'respond':
+        // 4止めの4は場に出ないので、場の演出をせず、いちばん上（8）も置き換えない（design-2 §6.2）
+        if (e.toDiscard === true) break;
         out.push({ kind: 'play', seq: e.seq, seat: e.seat, play: e.play });
         top = { seat: e.seat, play: e.play };
         break;
@@ -120,17 +132,20 @@ export function enqueueAnims(queue: readonly Anim[], add: readonly Anim[]): Anim
 export type NameOf = (seat: SeatId) => string;
 
 /**
- * 出来事ごとのメッセージ（§5.3、§7.7、§7.8）。null ならメッセージを出さない。
+ * 出来事ごとのメッセージ（§5.3、§7.7、§7.8、design-2 §4.5）。null ならメッセージを出さない。
  * 1回の state に複数あれば順に短く切り替え、最後の1つを残す。
+ * me は自分の席（7渡しの当事者の言い方を変えるため）。nameOf は自分の席に「あなた」を返す。
  */
-export function eventMessage(e: VisibleEvent, nameOf: NameOf): string | null {
+export function eventMessage(e: VisibleEvent, nameOf: NameOf, me: SeatId | null = null): string | null {
   switch (e.type) {
     case 'play':
       return `${nameOf(e.seat)} が ${playSummary(e.play)}${e.play.shape === 'run' ? 'を' : ''} 出した`;
     case 'pass':
       return `${nameOf(e.seat)} は パスした`;
     case 'fieldCleared':
-      return e.reason === 'flush_on_8' ? '8切り！' : '場が流れた';
+      if (e.reason === 'flush_on_8') return '8切り！';
+      if (e.reason === 'triple3_trump') return '砂嵐！';
+      return '場が流れた';
     case 'revolution':
       return e.active ? '革命！' : '革命が戻った';
     case 'tempReverse':
@@ -139,7 +154,8 @@ export function eventMessage(e: VisibleEvent, nameOf: NameOf): string | null {
     case 'suitLock':
       return '縛り！';
     case 'respond':
-      return 'スペ3返し！';
+      // toDiscard が付くのは4止めだけ（design-2 §6.2）
+      return e.toDiscard === true ? '4止め！' : 'スペ3返し！';
     case 'placed':
       return placedMessage(nameOf(e.seat), e.place, e.reason);
     case 'exchangeDone':
@@ -155,14 +171,23 @@ export function eventMessage(e: VisibleEvent, nameOf: NameOf): string | null {
     case 'gameEnd':
     case 'matchEnd':
       return null;
-    // その2の出来事（engine の型に合わせて網羅だけ足す。メッセージは client の作業で足す）
+    // その2の出来事（design-2 §4.5）
     case 'seqLock':
+      return '激縛り！';
     case 'orderReverse':
-    case 'choiceStart':
+      // 解除は場が流れるときに起き、「場が流れた」と重なるので出さない（J バックと同じ）
+      return e.active ? '9リバース！' : null;
     case 'give':
+      if (me !== null && e.from === me) return `${nameOf(e.from)} が ${nameOf(e.to)} に 渡した`;
+      if (me !== null && e.to === me) return `${nameOf(e.from)} から ${e.count}枚 受け取った`;
+      return `${nameOf(e.from)} が ${nameOf(e.to)} に ${e.count}枚 渡した`;
     case 'discard':
-    case 'choiceSkip':
+      return `${nameOf(e.seat)} が ${e.cards.length}枚 捨てた`;
     case 'skipped':
+      return e.seats.length === 0 ? null : `K スキップ！ ${e.seats.map((x) => nameOf(x)).join('・')} を飛ばした`;
+    case 'choiceStart':
+    case 'choiceSkip':
+      // 選んでいる間は「◯◯ が選んでいます」の表示で分かる。選ばなかったときはメッセージなし
       return null;
   }
 }

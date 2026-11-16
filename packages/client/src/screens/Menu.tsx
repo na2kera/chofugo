@@ -89,9 +89,11 @@ export function Menu({ state, feed, onClose, onLeave, initial = 'top' }: Props) 
               <li key={h.seq} className={s.hrow}>
                 <span className={s.hname}>{seatName(state.room.seats, h.seat, me)}</span>
                 <span className={s.hcards}>
-                  {h.play.cards.map((c) => (
+                  {h.cards.map((c) => (
                     <MiniCard key={c} id={c} />
                   ))}
+                  {/* 10捨てで捨てたカードには「10捨て」と添える（design-2 §4.5） */}
+                  {h.via === 'discard' && <span className="mut">10捨て</span>}
                 </span>
               </li>
             ))}

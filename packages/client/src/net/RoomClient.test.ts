@@ -57,7 +57,7 @@ function state(over: Partial<StateMessage> = {}): StateMessage {
       phase: 'playing',
       seats: [0, 1, 2, 3].map((seat) => ({ seat: seat as 0, kind: 'human' as const, name: `p${seat}`, connected: true, away: false })),
       host: 0,
-      config: { rules: [], gameCount: 5 },
+      config: { mode: 'daifugo', rules: [], gameCount: 5 },
       paused: false,
     },
     seat: 0,
@@ -279,5 +279,38 @@ describe('StrictMode 相当の「開始 → 後始末 → 開始」', () => {
     client.start();
     client.start();
     expect(sockets).toHaveLength(1);
+  });
+});
+
+describe('7渡しで受け取ったカードの強調（design-2 §6.3）', () => {
+  const view = (hand: string[]) => ({ gameNo: 1, game: { hand } }) as unknown as StateMessage['view'];
+  const giveToMe = (seq: number) => ev(seq, { type: 'give', from: 3, to: 0, count: 1, cards: ['club-3'] });
+
+  it('受け取ったら強調し、拒否では消さず、自分の操作が受理されたら消す', () => {
+    const s = joined();
+    s.receive(state({ view: view(['club-3', 'spade-9']), events: [giveToMe(5)] }));
+    expect(client.getSnapshot().gift?.cards).toEqual(['club-3']);
+    // 操作を送って拒否された
+    expect(client.sendAction({ type: 'pass', awaitId: 7 }, 'pass')).toBe(true);
+    const reqId = s.json().at(-1)!['reqId'] as number;
+    s.receive({ type: 'error', code: 'actionRejected', message: 'x', reqId, engineError: 'staleAwait' });
+    expect(client.getSnapshot().gift?.cards).toEqual(['club-3']);
+    // 他人の操作で届いた state では消えない
+    s.receive(state({ view: view(['club-3', 'spade-9']), events: [ev(6, { type: 'pass', seat: 1 })] }));
+    expect(client.getSnapshot().gift?.cards).toEqual(['club-3']);
+    // 自分の操作が受理された（返事を待っている間に state が届いた）
+    expect(client.sendAction({ type: 'pass', awaitId: 8 }, 'pass')).toBe(true);
+    s.receive(state({ view: view(['club-3', 'spade-9']), events: [ev(7, { type: 'pass', seat: 0 })] }));
+    expect(client.getSnapshot().gift).toBeNull();
+  });
+
+  it('設定などホストの操作の返事では消さない。復帰した直後は復元しない', () => {
+    const s = joined();
+    s.receive(state({ view: view(['club-3']), events: [giveToMe(5)] }));
+    expect(client.send({ type: 'nextGame', matchId: 'm1' }, 'next')).toBe(true);
+    s.receive(state({ view: view(['club-3']), events: [ev(6, { type: 'pass', seat: 1 })] }));
+    expect(client.getSnapshot().gift?.cards).toEqual(['club-3']);
+    s.receive(state({ view: view(['club-3']), events: [giveToMe(5)], eventsFull: true }));
+    expect(client.getSnapshot().gift).toBeNull();
   });
 });

@@ -91,6 +91,10 @@
   white-space: nowrap;
   color: inherit;
 }
+/* 1行に入りきらない表示名（ダイヤの3スタート）は、44px の行の中で2行にする */
+.twoLines {
+  line-height: 20px;
+}
 .swBtn {
   height: 44px;
   display: grid;
@@ -124,6 +128,28 @@
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 8px;
+}
+.seg2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+/* モードの切り替え（ルールの枠のいちばん上、design-2 §4.1） */
+.modes {
+  margin-bottom: 4px;
+}
+/* カスタムの見出し「定番」「応用」 */
+.sub {
+  margin: 4px 0 0;
+  font-weight: 400;
+  font-size: 16px;
+  line-height: 28px;
+  color: var(--muted);
+}
+/* 前提のルールが OFF で押せない（4止め）。OFF の行より暗くする */
+.locked {
+  color: var(--dim-line);
+}
+.locked .sw {
+  color: var(--dim-line);
 }
 .segBtn {
   height: 44px;

@@ -88,7 +88,7 @@ export function stateMsg(over: Partial<StateMessage> & { view?: PlayerView | nul
       phase: view === null ? 'lobby' : 'playing',
       seats: seats(),
       host: 0,
-      config: { rules: (view?.rules ?? [...DAIFUGO_MODE_DEFAULT_RULES]) as RuleId[], gameCount: view?.gameCount ?? 5 },
+      config: { mode: 'daifugo', rules: (view?.rules ?? [...DAIFUGO_MODE_DEFAULT_RULES]) as RuleId[], gameCount: view?.gameCount ?? 5 },
       paused: false,
       ...(over.room ?? {}),
     },
@@ -121,6 +121,7 @@ export function snapOf(state: StateMessage | null, over: Partial<Snapshot> = {})
     gameResultFirst: new Set(),
     joinError: null,
     notice: null,
+    gift: null,
     ...over,
   };
 }

@@ -18,6 +18,8 @@ export type OpponentProps = {
   place: Place | null;
   placeRed: boolean;
   active: boolean;
+  /** 7渡しで渡す相手（選んでいる本人の画面だけ）。手番と同じ明るい枠にする（design-2 §4.2）。 */
+  target?: boolean;
   passed: boolean;
   away: boolean;
   /** 場の手を出した人の印（▼）。 */
@@ -30,13 +32,14 @@ export type OpponentProps = {
 };
 
 export function Opponent(p: OpponentProps) {
-  const frame = p.flash === 'red' ? 'red' : p.active || p.flash === 'gold' ? 'hot' : 'dim';
+  const frame = p.flash === 'red' ? 'red' : p.active || p.target === true || p.flash === 'gold' ? 'hot' : 'dim';
   const label = [
     p.name,
     p.rank !== null ? PLACE_TITLE[p.rank] : null,
     p.place !== null ? `${p.place}位` : p.count !== null ? `残り${p.count}枚` : null,
     p.passed ? 'パス' : null,
     p.active ? '考え中' : null,
+    p.target === true ? '渡す相手' : null,
   ]
     .filter(Boolean)
     .join('、');

@@ -4,10 +4,14 @@
 //
 //   node scripts/bots.mjs [--base http://localhost:5173] [--room <ルームID>] [--count 3]
 //                         [--delay 400] [--games 5|10|0] [--start-when 4] [--rematch] [--quiet]
+//                         [--mode daifugo|custom] [--rules all|<ID,ID,...>]
 //
 //   --room がなければルームを作って URL を表示する。
 //   ボットがホストになったら、人が --start-when 人（初期値 4）そろった時点で試合を始め（残りの空席は CPU になる）、
 //   ゲームの結果では次のゲームを配る。試合の結果に着いたら終わる（--rematch ならもう一度）。
+//   --mode / --rules はボットがホストのときに設定する（--rules all はそのモードで選べるルールすべて）。
+//   設定はサーバーが直す（モードで選べないルール・前提のないルールは外れる）。指定がなければルームの設定のまま。
+//   7渡し・10捨ての選択（choice）では、手札からでたらめに 0〜上限枚を選ぶ。
 
 const args = process.argv.slice(2);
 function opt(name, def) {
@@ -24,6 +28,25 @@ const GAMES = opt('games', '5');
 const REMATCH = opt('rematch', false) === true;
 const QUIET = opt('quiet', false) === true;
 const START_WHEN = Number(opt('start-when', 4));
+const MODE = opt('mode', null);
+const RULES = opt('rules', null);
+
+// engine の ALL_RULE_IDS と DAIFUGO_MODE_RULE_IDS（このスクリプトは engine を読み込まないので写しを持つ）
+const ALL_RULES = [
+  'flush_on_8', 'block_flush_with_4', 'revolution', 'temp_reverse_on_j', 'spade3_beats_joker', 'suit_lock', 'sequence_lock', 'runs',
+  'forbidden_finish', 'dethrone', 'diamond3_start', 'triple3_trump', 'give_on_7', 'reverse_order_on_9', 'discard_on_10', 'skip_on_k',
+];
+const DAIFUGO_RULES = ['flush_on_8', 'revolution', 'temp_reverse_on_j', 'spade3_beats_joker', 'suit_lock', 'runs', 'forbidden_finish', 'dethrone'];
+if (MODE !== null && MODE !== 'daifugo' && MODE !== 'custom') throw new Error('--mode は daifugo か custom');
+
+/** ホストのときに送る設定（指定がなければいまの設定）。 */
+function wantedConfig(cur, gameCount) {
+  const mode = MODE ?? cur.mode;
+  let rules = cur.rules;
+  if (RULES === 'all') rules = mode === 'custom' ? ALL_RULES : DAIFUGO_RULES;
+  else if (typeof RULES === 'string') rules = RULES.split(',').map((x) => x.trim()).filter(Boolean);
+  return { type: 'setConfig', mode, rules, gameCount };
+}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (...a) => {
@@ -42,6 +65,14 @@ function pick(arr) {
 
 /** 出せる手からでたらめに選ぶ。親は出せる手があればパスできない（server/test/helpers.mjs と同じ考え方）。 */
 function chooseAction(mine, hand) {
+  if (mine.kind === 'choice') {
+    // 7渡し・10捨て：手札からでたらめに 0〜max 枚
+    const pool = hand.slice();
+    const n = Math.floor(Math.random() * (Math.min(mine.max, pool.length) + 1));
+    const cards = [];
+    while (cards.length < n) cards.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+    return { type: 'choose', awaitId: mine.awaitId, cards };
+  }
   if (mine.kind === 'turn') {
     const plays = mine.plays;
     if (mine.canPass && (plays.length === 0 || Math.random() < 0.3)) return { type: 'pass', awaitId: mine.awaitId };
@@ -120,6 +151,14 @@ class Bot {
     const prevPhase = this.state?.matchPhase;
     this.state = s;
     if (s.seat === null) return;
+    // その2の出来事を数える（ルールが実際に起きたかの目安）
+    if (!s.eventsFull) {
+      this.stats ??= {};
+      for (const e of s.events) {
+        const k = e.type === 'fieldCleared' ? `fieldCleared:${e.reason}` : e.type === 'respond' && e.toDiscard ? 'respond:4止め' : e.type;
+        if (['seqLock', 'orderReverse', 'choiceStart', 'give', 'discard', 'choiceSkip', 'skipped', 'respond:4止め', 'fieldCleared:triple3_trump', 'respond'].includes(k)) this.stats[k] = (this.stats[k] ?? 0) + 1;
+      }
+    }
     if (s.matchPhase !== prevPhase) log(`${this.name}: ${s.matchPhase ?? 'lobby'}${s.view ? ` 第${s.view.gameNo}ゲーム` : ''}`);
     const mine = s.view?.mine;
     if (mine) this.once(`${s.matchId}:a${mine.awaitId}`, () => this.send({ type: 'action', matchId: s.matchId, action: chooseAction(mine, s.view.game?.hand ?? []) }));
@@ -131,8 +170,11 @@ class Bot {
       const humans = s.room.seats.filter((x) => x.kind === 'human').length;
       if (humans >= START_WHEN) {
         const gameCount = GAMES === '0' ? null : Number(GAMES);
-        this.once(`config`, () => this.send({ type: 'setConfig', rules: s.room.config.rules, gameCount }), 50);
-        this.once(`start`, () => this.send({ type: 'start' }), DELAY);
+        // 設定と開始は同じ接続で続けて送る（届く順は送った順なので、短い --delay でも設定が先に効く）
+        this.once(`start`, () => {
+          this.send(wantedConfig(s.room.config, gameCount));
+          this.send({ type: 'start' });
+        }, DELAY);
       }
     } else if (s.matchPhase === 'gameResult') {
       this.once(`${s.matchId}:next${s.view.gameNo}`, () => this.send({ type: 'nextGame', matchId: s.matchId }), DELAY * 3);
@@ -147,6 +189,8 @@ class Bot {
     this.finished = true;
     const st = s.view?.standings ?? [];
     log(`${this.name}: 試合の結果 ${st.map((x) => `${x.rank}位 ${s.room.seats[x.seat].name} ${x.score}`).join(' / ')}`);
+    log(`${this.name}: モード ${s.room.config.mode} ルール ${s.room.config.rules.length}種 ${s.room.config.rules.join(',')}`);
+    if (this.stats) log(`${this.name}: 出来事 ${Object.entries(this.stats).map(([k, v]) => `${k}=${v}`).join(' ')}`);
   }
 }
 

@@ -10,12 +10,14 @@ import { Opponent } from '../components/Opponent.tsx';
 import { TimeBar } from '../components/TimeBar.tsx';
 import { PLACE_TITLE, shapeChoiceLabel } from '../lib/cards.ts';
 import { evaluateExchange, exchangePrompt, toggleExchange } from '../lib/exchange.ts';
+import { choiceButtons, choiceCards, choicePrompt, toggleChoice } from '../lib/choice.ts';
 import { opponentOrder, relativePos, seatName } from '../lib/seats.ts';
 import {
   afterShapeChosen,
   DIM_REASON_TEXT,
   dimReason,
   evaluateSelection,
+  initialRespondSelection,
   nextPlayStep,
   scopedValue,
   selectionKey,
@@ -46,11 +48,15 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
   const mine = view.mine;
   const phase = view.phase;
   const key = selectionKey(state.matchId, view.gameNo, mine?.awaitId ?? null);
-  const [sel, setSel] = useState<Scoped<CardId[]>>({ key, value: initialSelected ?? EMPTY });
+  // 返しの一周で返せる組み合わせが1つだけなら、はじめから選んだ状態にする（design-2 §4.3）
+  const defaultSel = mine !== null && mine.kind === 'respond' ? initialRespondSelection(mine) : EMPTY;
+  const [sel, setSel] = useState<Scoped<CardId[]>>({ key, value: initialSelected ?? defaultSel });
   const [stepS, setStepS] = useState<Scoped<PlayStep>>({ key, value: initialStep ?? NO_STEP });
   const [receivedCleared, setReceivedCleared] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(initialMenu ?? false);
-  const selected = scopedValue(sel, key, EMPTY);
+  /** 最後に出した「出せない理由」（ダイヤの3の案内より優先して見せるため）。 */
+  const [dimLine, setDimLine] = useState<string | null>(null);
+  const selected = scopedValue(sel, key, defaultSel);
   const step = scopedValue(stepS, key, NO_STEP);
   const canAct = snap.ready && snap.pending === null && !state.room.paused;
   const names = (seat: SeatId) => seatName(state.room.seats, seat);
@@ -60,6 +66,9 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
   // ---------- 手札の見え方 ----------
   const hand = game.hand;
   const received = new Set(receivedCleared === gameKey ? [] : (game.myExchange?.received ?? []));
+  // 7渡しで受け取ったカード（design-2 §6.3）。見た目は交換で受け取ったカードと同じ
+  const gift = snap.gift;
+  if (gift !== null && gift.matchId === state.matchId && gift.gameNo === view.gameNo) for (const c of gift.cards) received.add(c);
   let lookOf: (id: CardId) => CardLook = () => 'normal';
   let onPress: ((id: CardId) => void) | undefined;
   let exchangeReady = false;
@@ -76,6 +85,13 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
       const next = toggleExchange(mine, hand, selected, id);
       if (next !== null) setSel({ key, value: next });
     };
+  } else if (mine !== null && mine.kind === 'choice') {
+    // 7渡し・10捨て：手札のどのカードも、上限まで選べる（design-2 §4.2）
+    lookOf = (id) => (selected.includes(id) ? 'sel' : 'normal');
+    onPress = (id) => {
+      const next = toggleChoice(mine, hand, selected, id);
+      if (next !== null) setSel({ key, value: next });
+    };
   } else if (mine !== null && (mine.kind === 'turn' || mine.kind === 'respond')) {
     plays = mine.plays;
     const ev = evaluateSelection(hand, plays, selected);
@@ -85,7 +101,9 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
       if (step.kind !== 'none') setStepS({ key, value: NO_STEP });
       const next = toggleCard(hand, plays, selected, id);
       if (next === null) {
-        api.showLine(DIM_REASON_TEXT[dimReason(mine, plays, selected, id, game.suitLock)]);
+        const text = DIM_REASON_TEXT[dimReason(mine, plays, selected, id, game.suitLock, { seqLock: game.seqLock, openingCard: game.openingCard })];
+        setDimLine(text);
+        api.showLine(text);
         return;
       }
       setSel({ key, value: next });
@@ -131,6 +149,12 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
     }
     if (api.sendAction({ type: 'respond', awaitId: mine.awaitId, cards }, skip ? 'skip' : 'respond')) markActed();
   };
+  const onChoose = (skip: boolean) => {
+    if (mine === null || mine.kind !== 'choice') return;
+    const cards = skip ? [] : choiceCards(mine, hand, selected);
+    if (!skip && cards.length === 0) return;
+    if (api.sendAction({ type: 'choose', awaitId: mine.awaitId, cards }, skip ? 'chooseSkip' : 'choose')) markActed();
+  };
   const onGive = () => {
     if (mine === null || mine.kind !== 'exchangeGive') return;
     api.sendAction({ type: 'exchangeGive', awaitId: mine.awaitId, cards: exchangeCards }, 'give');
@@ -164,16 +188,25 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
   } else if (phase === 'exchange') {
     line = mine !== null && mine.kind === 'exchangeGive' ? exchangePrompt(mine) : '交換中…';
   } else if (mine !== null && mine.kind === 'respond') {
-    line = 'スペードの3で返しますか？';
+    line = mine.rule === 'block_flush_with_4' ? '4を2枚出して 8切りを止めますか？' : 'スペードの3で返しますか？';
   } else if (rr !== null && rr.asking !== null && rr.asking !== me) {
     line = `${names(rr.asking)} が考えています`;
+  } else if (mine !== null && mine.kind === 'choice') {
+    line = choicePrompt(mine);
+  } else if (game.choice !== null && game.choice.seat !== me) {
+    line = `${names(game.choice.seat)} が選んでいます`;
+  } else if (mine !== null && mine.kind === 'turn' && game.openingCard !== null && !(dimLine !== null && snap.line === dimLine)) {
+    // ダイヤの3の義務：最初の親にだけ出す（design-2 §4.4）。出せない理由を押して出したときは、そちらを残す
+    line = '最初の1手には ダイヤの3を含めます';
   }
 
   // ---------- 自分 ----------
   const myRank = view.prevRanks?.[me] ?? null;
   const myPlace = game.places[me] ?? null;
   const myDeadline = deadlineOf(me);
-  const myTurn = mine !== null && (mine.kind === 'turn' || mine.kind === 'respond');
+  const myTurn = mine !== null && (mine.kind === 'turn' || mine.kind === 'respond' || mine.kind === 'choice');
+  // 7渡しの相手（選ぶ人にだけ、相手の枠を手番と同じ明るい枠にする。design-2 §4.2）
+  const giveTo = mine !== null && mine.kind === 'choice' ? mine.to : null;
   const busy = (what: string) => snap.pending !== null && snap.pending.what === what;
 
   // ---------- ボタン ----------
@@ -183,6 +216,19 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
       <div className={s.actions1}>
         <button type="button" className="f btn" disabled={!canAct || !exchangeReady || busy('give')} onClick={onGive}>
           渡す
+        </button>
+      </div>
+    );
+  } else if (mine !== null && mine.kind === 'choice') {
+    const picked = choiceCards(mine, hand, selected);
+    const label = choiceButtons(mine, picked.length);
+    actions = (
+      <div className={s.actions}>
+        <button type="button" className="f btn2" disabled={!canAct} onClick={() => onChoose(true)}>
+          {label.skip}
+        </button>
+        <button type="button" className="f btn" disabled={!canAct || picked.length === 0} onClick={() => onChoose(false)}>
+          {label.send}
         </button>
       </div>
     );
@@ -264,6 +310,7 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
               place={game.places[seat] ?? null}
               placeRed={reason === 'foul' || reason === 'dethrone'}
               active={view.awaiting.some((a) => a.seat === seat)}
+              target={giveTo === seat}
               passed={phase === 'play' && (game.passed[seat] ?? false)}
               away={info?.away ?? false}
               owner={owner === seat}
@@ -282,6 +329,8 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
         tempReverse={game.tempReverse}
         reversed={game.reversed}
         suitLock={game.suitLock}
+        seqLock={game.seqLock}
+        orderReversed={game.orderReversed}
         motion={motion}
         {...(motionKey !== undefined ? { motionKey } : {})}
       />
