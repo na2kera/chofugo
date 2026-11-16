@@ -230,6 +230,23 @@ describe('メッセージ（design-3 §4.5）', () => {
     expect(recv(a.feed, [both]).lines).toEqual(['スキップ！ ゆい・CPU 4 を飛ばした']);
   });
 
+  it('返しの一周をはさんでも（スキップした人の respondSkip は手番を進めない）、続く skipped に使う。4止め・返しの成立（respond）では捨てる', () => {
+    const recv = (feed: Feed, events: VisibleEvent[]) => {
+      const before = feed.skip;
+      const r = ingest(feed, { matchId: 'm1', events, eventsFull: false });
+      return { feed: r.feed, lines: eventLines(r.fresh, nameOf, 0, before) };
+    };
+    const a = recv(emptyFeed(), [ev({ type: 'play', seat: 1, play: g(['joker-0'], null), foul: false }, 1), ev({ type: 'ability', seat: 1, ability: 'skip' }, 2), ev({ type: 'returnRoundStart', rule: 'spade3_beats_joker', source: 1, participants: [2, 3, 0] }, 3)]);
+    const b = recv(a.feed, [ev({ type: 'respondSkip', seat: 2 }, 4)]);
+    expect(b.feed.skip).toEqual({ gameNo: 2, seat: 1 });
+    const c = recv(b.feed, [ev({ type: 'respondSkip', seat: 3 }, 5), ev({ type: 'respondSkip', seat: 0 }, 6), ev({ type: 'returnRoundEnd', rule: 'spade3_beats_joker', returnedBy: null }, 7), ev({ type: 'skipped', by: 1, seats: [2] }, 8)]);
+    expect(c.lines).toEqual(['スキップ！ ゆい を飛ばした']);
+    // 4止めが成立すると、残りの効果（スキップを含む）は捨てられ、skipped は来ない：覚え書きも捨てる
+    const d = recv(emptyFeed(), [ev({ type: 'play', seat: 1, play: g(['spade-8'], 8), foul: false }, 1), ev({ type: 'ability', seat: 1, ability: 'skip' }, 2)]);
+    const e = recv(d.feed, [ev({ type: 'respond', seat: 2, play: g(['spade-4', 'heart-4'], 4), toDiscard: true }, 3)]);
+    expect(e.feed.skip).toBe(null);
+  });
+
   it('飛ばす人がいなかった特権のスキップの覚え書きは、手番が進む・ゲームが変わると捨てる（あとの K スキップは K スキップのまま）', () => {
     const recv = (feed: Feed, events: VisibleEvent[]) => {
       const before = feed.skip;

@@ -260,9 +260,10 @@ describe('choose の不正な入力と、選択の途中の全員不在（WebSoc
     expect(A.states.some((s) => s.acceptedReqId !== undefined && s.version > version)).toBe(false);
 
     // 全員不在：A・B とも切断 → 一時停止。猶予は長いので、A は代役にならない
-    const before = B.state;
-    const dBefore = before.deadlines.find((d) => d.awaitId === mine.awaitId);
-    const remainingBefore = dBefore.at - before.serverTime;
+    const dBefore = B.state.deadlines.find((d) => d.awaitId === mine.awaitId);
+    // 切断の前に1秒置き、選択が始まってからの経過を client の時計で測る（同じ機械なので、サーバーの経過はこれより短くならない）
+    await new Promise((r) => setTimeout(r, 1000));
+    const elapsed = Date.now() - sel.receivedAt;
     A.close();
     B.close();
     await Promise.all([A.waitClosed(), B.waitClosed()]);
@@ -276,17 +277,18 @@ describe('choose の不正な入力と、選択の途中の全員不在（WebSoc
     expect(back.view.awaiting).toEqual(sel.view.awaiting);
     const dBack = back.deadlines.find((d) => d.awaitId === mine.awaitId);
     expect(dBack.at).toBeTypeOf('number');
-    // 期限は止めていた分だけ後ろへずれ（全員不在の間は数えない）、残りは止める前より増えない（秒数いっぱいに戻さない）
+    // 期限は止めていた分だけ後ろへずれ（全員不在の間は数えない）、残りは「秒数 − 止めるまでの経過」以下（秒数いっぱいに戻さない）
     expect(dBack.at).toBeGreaterThan(dBefore.at);
-    expect(dBack.at - back.serverTime).toBeLessThanOrEqual(remainingBefore);
-    expect(dBack.at - back.serverTime).toBeLessThan(choiceMs);
-    // A も戻る：戻った本人の待ちは秒数いっぱいに付け直す（B2）
+    expect(dBack.at - back.serverTime).toBeLessThanOrEqual(choiceMs - elapsed);
+    expect(elapsed).toBeGreaterThanOrEqual(1000);
+    // A も戻る：戻った本人の待ちは秒数いっぱいに付け直す（B2）。続きの残り（秒数 − 1秒以上）より長い
     const A2 = new DetClient(server.base, roomId, { name: 'A', token: A.token, hold: true });
     await A2.connect();
     A2.hello();
     const aBack = await A2.waitState((s) => s.seat === 0 && s.eventsFull, WAIT, 'A back');
     const dA = aBack.deadlines.find((d) => d.awaitId === mine.awaitId);
     expect(dA.at - aBack.serverTime).toBeLessThanOrEqual(choiceMs);
+    expect(dA.at - aBack.serverTime).toBeGreaterThan(choiceMs - elapsed);
     expect(dA.at).toBeGreaterThan(dBack.at);
     expect(aBack.view.mine).toMatchObject({ kind: 'choice', awaitId: mine.awaitId });
 
