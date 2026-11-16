@@ -112,6 +112,7 @@
   text-shadow: 4px 4px 0 var(--k);
   animation: blink 480ms steps(1) both;
   z-index: 20;
+  pointer-events: none;
 }
 
 @keyframes blink {

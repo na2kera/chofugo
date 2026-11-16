@@ -39,6 +39,8 @@
 .cards {
   position: relative;
   width: 100%;
+  /* 場のカードは押せない。飛んでくる演出が手札やボタンの上を通っても、押せる範囲をさえぎらない */
+  pointer-events: none;
 }
 .slot {
   position: absolute;

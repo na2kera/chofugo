@@ -1,6 +1,24 @@
+.page {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.footer {
+  flex: none;
+  padding: 8px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.notice {
+  margin: 0;
+  text-align: center;
+  color: var(--gold-hi);
+}
 .lobby {
   flex: 1;
-  padding: 16px 16px 16px;
+  padding: 16px 16px 8px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -20,8 +38,8 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  height: 20px;
-  margin-bottom: 4px;
+  height: 44px;
+  margin-top: -6px;
 }
 .hrow .h {
   margin: 0;
@@ -58,7 +76,7 @@
   column-gap: 10px;
 }
 .tg {
-  height: 32px;
+  height: 44px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -67,7 +85,6 @@
 /* 見た目は見本の高さ、押せる範囲は 44px */
 .ruleName {
   height: 44px;
-  margin: -6px 0;
   text-align: left;
   flex: 1;
   min-width: 0;
@@ -76,7 +93,6 @@
 }
 .swBtn {
   height: 44px;
-  margin: -6px 0;
   display: grid;
   place-items: center;
   flex: none;
@@ -98,7 +114,6 @@
 }
 .reset {
   height: 44px;
-  margin: -12px 0;
   color: var(--gold-hi);
   padding: 0 2px;
 }

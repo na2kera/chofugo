@@ -38,6 +38,7 @@ export function Lobby({ state, snap, api, initialOpen }: ScreenProps & { initial
   for (let i = 0; i < LOBBY_RULE_ORDER.length; i += 2) pairs.push(LOBBY_RULE_ORDER.slice(i, i + 2));
 
   return (
+    <div className={s.page}>
     <div className={s.lobby}>
       <Logo />
 
@@ -138,14 +139,22 @@ export function Lobby({ state, snap, api, initialOpen }: ScreenProps & { initial
         </div>
       </section>
 
-      <div className={s.grow} />
-      {host ? (
-        <button type="button" className="f btn" disabled={!canAct} onClick={() => api.send({ type: 'start' }, 'start')}>
-          ゲームを始める
-        </button>
-      ) : (
-        <p className={s.wait}>ホストが始めるのを待っています</p>
-      )}
+    </div>
+      {/* 下の帯：知らせの1行と、開始のボタン（ルールの欄が伸びても常に見える） */}
+      <div className={s.footer}>
+        {snap.notice !== null && (
+          <p className={s.notice} role="status">
+            {snap.notice}
+          </p>
+        )}
+        {host ? (
+          <button type="button" className="f btn" disabled={!canAct} onClick={() => api.send({ type: 'start' }, 'start')}>
+            ゲームを始める
+          </button>
+        ) : (
+          <p className={s.wait}>ホストが始めるのを待っています</p>
+        )}
+      </div>
     </div>
   );
 }

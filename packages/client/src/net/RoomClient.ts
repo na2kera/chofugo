@@ -40,9 +40,30 @@ export type Snapshot = {
   gameResultFirst: ReadonlySet<string>;
   /** 入れなかった理由（席がない・途中参加できない）。 */
   joinError: 'roomFull' | 'cannotJoin' | null;
+  /**
+   * 一時的な知らせ（拒否の理由・ホストの交代）。どの画面でも1行で出し、交換や返しの一周の案内より優先する（§7.13）。
+   * NOTICE_MS たつと消える。
+   */
+  notice: string | null;
 };
 
 const MESSAGE_STEP_MS = 600;
+export const NOTICE_MS = 4000;
+const OPEN = 1;
+
+/** テストで差し替える WebSocket の形。 */
+export type SocketLike = {
+  readyState: number;
+  send(data: string): void;
+  close(code?: number, reason?: string): void;
+  onopen: ((ev: unknown) => void) | null;
+  onclose: ((ev: { code: number }) => void) | null;
+  onmessage: ((ev: { data: unknown }) => void) | null;
+  onerror: ((ev: unknown) => void) | null;
+};
+export type SocketFactory = (url: string) => SocketLike;
+
+const defaultFactory: SocketFactory = (url) => new WebSocket(url) as unknown as SocketLike;
 const ANIM_MS: Record<Anim['kind'], number> = { play: 360, sweep: 360, revolution: 480, placed: 600 };
 
 function reducedMotion(): boolean {
@@ -53,8 +74,26 @@ function reducedMotion(): boolean {
   }
 }
 
+/**
+ * 「ゲームの結果を先に見せる」試合の印（§7.3、§7.13）。
+ * - 同じ state に gameEnd と matchEnd が入っていたら（最後のゲームが終わった瞬間）印を付ける。
+ * - eventsFull で matchResult を受けたら（切れて戻ったなど）、その試合の印を消して試合の結果を直接見せる。
+ * - 試合の識別子が変わったら、ほかの試合の印を片付ける。
+ */
+export function nextGameResultFirst(
+  prev: ReadonlySet<string>,
+  msg: Pick<StateMessage, 'matchId' | 'matchPhase' | 'eventsFull'>,
+  fresh: readonly { type: string }[],
+): ReadonlySet<string> {
+  const s = new Set([...prev].filter((id) => id === msg.matchId));
+  if (msg.matchId === null) return s;
+  if (msg.eventsFull && msg.matchPhase === 'matchResult') s.delete(msg.matchId);
+  else if (fresh.some((e) => e.type === 'matchEnd') && fresh.some((e) => e.type === 'gameEnd')) s.add(msg.matchId);
+  return s;
+}
+
 export class RoomClient {
-  private ws: WebSocket | null = null;
+  private ws: SocketLike | null = null;
   private listeners = new Set<() => void>();
   private snap: Snapshot;
   private everConnected = false;
@@ -70,14 +109,16 @@ export class RoomClient {
   private pendingTimer: ReturnType<typeof setTimeout> | null = null;
   private msgTimer: ReturnType<typeof setTimeout> | null = null;
   private animTimer: ReturnType<typeof setTimeout> | null = null;
+  private noticeTimer: ReturnType<typeof setTimeout> | null = null;
   private msgQueue: string[] = [];
   private animQueue: Anim[] = [];
-  private disposed = false;
+  private running = false;
   private readonly token: string;
 
   constructor(
     readonly roomId: string,
     private readonly wsUrl: string,
+    private readonly factory: SocketFactory = defaultFactory,
   ) {
     this.token = getToken();
     this.snap = {
@@ -92,6 +133,7 @@ export class RoomClient {
       offset: 0,
       gameResultFirst: new Set(),
       joinError: null,
+      notice: null,
     };
   }
 
@@ -111,27 +153,41 @@ export class RoomClient {
 
   // ---------- 接続 ----------
 
+  /**
+   * 接続を始める。dispose のあとにもう一度呼んでよい（React の StrictMode の「開始 → 後始末 → 開始」）。
+   * 再開始では、新しい接続を作り直す（前の接続は dispose で閉じている）。
+   */
   start(): void {
+    if (this.running) return;
+    this.running = true;
+    this.failures = 0;
+    this.attempt = 0;
     this.connect();
   }
 
+  /** 接続とタイマーを片付ける。購読（useSyncExternalStore）は React が外すので、ここでは触らない。 */
   dispose(): void {
-    this.disposed = true;
+    this.running = false;
     this.clearTimers();
     if (this.retryTimer) clearTimeout(this.retryTimer);
-    if (this.msgTimer) clearTimeout(this.msgTimer);
+    this.retryTimer = null;
+    this.clearMessages();
     if (this.animTimer) clearTimeout(this.animTimer);
+    this.animTimer = null;
+    this.animQueue = [];
+    this.dropSocket();
+  }
+
+  private dropSocket(): void {
     const ws = this.ws;
     this.ws = null;
-    if (ws) {
-      ws.onopen = ws.onclose = ws.onmessage = ws.onerror = null;
-      try {
-        ws.close();
-      } catch {
-        // すでに閉じている
-      }
+    if (ws === null) return;
+    ws.onopen = ws.onclose = ws.onmessage = ws.onerror = null;
+    try {
+      ws.close();
+    } catch {
+      // すでに閉じている
     }
-    this.listeners.clear();
   }
 
   /** 「もう一度」（諦めたあと）。 */
@@ -143,17 +199,19 @@ export class RoomClient {
   }
 
   private connect(): void {
-    if (this.disposed) return;
+    if (!this.running) return;
     this.openedThisSocket = false;
     this.helloSentThisSocket = false;
-    let ws: WebSocket;
+    let ws: SocketLike;
     try {
-      ws = new WebSocket(this.wsUrl);
+      ws = this.factory(this.wsUrl);
     } catch {
       this.onClosed(1006);
       return;
     }
     this.ws = ws;
+    // つながる前から無応答の期限を数える（つながらないまま固まった接続も、失敗として数えてつなぎ直す）
+    this.touch();
     ws.onopen = () => {
       if (this.ws !== ws) return;
       this.openedThisSocket = true;
@@ -162,7 +220,7 @@ export class RoomClient {
       // 1回も送信していない接続はサーバーから閉じきれないので、すぐ ping を送る（server-assumptions C4）
       ws.send('ping');
       this.pingTimer = setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN) ws.send('ping');
+        if (ws.readyState === OPEN) ws.send('ping');
       }, PING_MS);
       this.touch();
       this.set({ status: 'open' });
@@ -193,15 +251,9 @@ export class RoomClient {
   private touch(): void {
     if (this.silenceTimer) clearTimeout(this.silenceTimer);
     this.silenceTimer = setTimeout(() => {
-      // 15秒間何も届かない：接続を捨ててつなぎ直す
-      const ws = this.ws;
-      if (ws === null) return;
-      ws.onopen = ws.onclose = ws.onmessage = ws.onerror = null;
-      try {
-        ws.close();
-      } catch {
-        // 無視
-      }
+      // 15秒間何も届かない（つながる前を含む）：接続を捨ててつなぎ直す
+      if (this.ws === null) return;
+      this.dropSocket();
       this.onClosed(4000);
     }, SILENCE_MS);
   }
@@ -231,7 +283,10 @@ export class RoomClient {
     this.attempt += 1;
     this.set({ status: this.everConnected ? 'reconnecting' : 'connecting', ready: false, pending });
     if (this.retryTimer) clearTimeout(this.retryTimer);
-    this.retryTimer = setTimeout(() => this.connect(), delay);
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      this.connect();
+    }, delay);
   }
 
   // ---------- 受信 ----------
@@ -257,25 +312,19 @@ export class RoomClient {
     const before = this.snap.feed.matchId === msg.matchId ? this.snap.feed.top : null;
     const { feed, fresh } = ingest(this.snap.feed, msg);
     patch.feed = feed;
-    // 最後のゲームから出来事を通じて試合の結果へ進んだときだけ、先にゲームの結果を見せる（§7.3）。
-    // 無制限の試合をゲームの結果の画面から終えたときは、ゲームの結果はもう見ているので、そのまま試合の結果へ。
-    if (msg.matchId !== null && fresh.some((e) => e.type === 'matchEnd') && fresh.some((e) => e.type === 'gameEnd')) {
-      const s = new Set(this.snap.gameResultFirst);
-      s.add(msg.matchId);
-      patch.gameResultFirst = s;
-    }
+    patch.gameResultFirst = nextGameResultFirst(this.snap.gameResultFirst, msg, fresh);
     const names = (seat: SeatId) => seatName(msg.room.seats, seat, msg.seat);
     const lines: string[] = [];
-    // ホストが替わったら1行出す（§7.10）
-    if (prev !== null && prev.room.host !== null && msg.room.host !== null && prev.room.host !== msg.room.host && msg.seat !== null) {
-      lines.push(msg.room.host === msg.seat ? 'あなたが ホストになった' : `${names(msg.room.host)} が ホストになった`);
-    }
     for (const e of fresh) {
       const t = eventMessage(e, names);
       if (t !== null) lines.push(t);
     }
-    if (msg.eventsFull || (prev !== null && prev.matchId !== msg.matchId)) {
-      // 接続・復帰の直後・新しい試合：演出をせず、最新の状態だけを描く
+    const reset = msg.eventsFull || (prev !== null && prev.matchId !== msg.matchId);
+    if (reset) {
+      // 接続・復帰の直後・新しい試合：前のメッセージ・演出は捨て、最新の状態だけを描く
+      this.clearMessages();
+      patch.line = null;
+      patch.notice = null;
       this.animQueue = [];
       patch.anim = null;
       if (this.animTimer) clearTimeout(this.animTimer);
@@ -297,6 +346,10 @@ export class RoomClient {
       }
     }
     this.set(patch);
+    // ホストが替わったら1行出す（§7.10、§7.13。どの画面でも出す）
+    if (prev !== null && prev.room.host !== null && msg.room.host !== null && prev.room.host !== msg.room.host && msg.seat !== null) {
+      this.showNotice(msg.room.host === msg.seat ? 'あなたが ホストになった' : `${names(msg.room.host)} が ホストになった`);
+    }
     if (lines.length > 0) this.pushLines(lines);
     if (this.snap.anim === null) this.nextAnim();
   }
@@ -308,10 +361,30 @@ export class RoomClient {
       return;
     }
     this.set({ pending });
-    this.showLine(errorText(msg));
+    this.showNotice(errorText(msg));
+  }
+
+  // ---------- 一時的な知らせ ----------
+
+  private showNotice(text: string): void {
+    if (this.noticeTimer) clearTimeout(this.noticeTimer);
+    this.set({ notice: text });
+    this.noticeTimer = setTimeout(() => {
+      this.noticeTimer = null;
+      this.set({ notice: null });
+    }, NOTICE_MS);
   }
 
   // ---------- メッセージの欄 ----------
+
+  /** メッセージの行の待ち行列とタイマーを捨てる。 */
+  private clearMessages(): void {
+    this.msgQueue = [];
+    if (this.msgTimer) clearTimeout(this.msgTimer);
+    this.msgTimer = null;
+    if (this.noticeTimer) clearTimeout(this.noticeTimer);
+    this.noticeTimer = null;
+  }
 
   /** 画面の側の1行（出せない理由など）。待っているメッセージは捨てて、すぐ出す。 */
   showLine(text: string): void {
@@ -369,7 +442,7 @@ export class RoomClient {
 
   private sendHello(name: string): void {
     const ws = this.ws;
-    if (ws === null || ws.readyState !== WebSocket.OPEN || this.helloSentThisSocket) return;
+    if (ws === null || ws.readyState !== OPEN || this.helloSentThisSocket) return;
     this.helloSentThisSocket = true;
     this.reqId = nextReqId(this.reqId);
     ws.send(JSON.stringify({ type: 'hello', token: this.token, name: name.trim() === '' ? 'プレイヤー' : name, reqId: this.reqId }));
@@ -378,7 +451,7 @@ export class RoomClient {
   /** 操作を送る。送れなければ false。what はどのボタンの送信かの印（押せなくするボタンを決める）。 */
   send(msg: ClientMessage, what: string): boolean {
     const ws = this.ws;
-    if (ws === null || ws.readyState !== WebSocket.OPEN || !this.snap.ready) return false;
+    if (ws === null || ws.readyState !== OPEN || !this.snap.ready) return false;
     if (this.snap.pending !== null) return false;
     this.reqId = nextReqId(this.reqId);
     const withId = { ...msg, reqId: this.reqId };

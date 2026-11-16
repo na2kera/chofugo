@@ -65,7 +65,8 @@ export function RoomBody({ snap, api, fixedNow }: { snap: Snapshot; api: RoomApi
 export function Banner({ snap }: { snap: Snapshot }) {
   let text: string | null = null;
   if (snap.status === 'reconnecting' && snap.joinStage === 'joined') text = 'つなぎ直しています…';
-  else if (snap.state?.room.paused) text = '一時停止中';
+  // 一時停止の帯は、自分が参加したあとの、試合が始まっている間だけ（§7.13）
+  else if (snap.joinStage === 'joined' && snap.state?.room.paused && snap.state.matchPhase !== null) text = '一時停止中';
   if (text === null) return null;
   return (
     <div className={`f red redt ${s.banner}`} role="alert">

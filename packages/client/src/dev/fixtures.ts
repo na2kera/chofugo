@@ -116,6 +116,7 @@ export function snapOf(state: StateMessage | null, over: Partial<Snapshot> = {})
     offset: 0,
     gameResultFirst: new Set(),
     joinError: null,
+    notice: null,
     ...over,
   };
 }

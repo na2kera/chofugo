@@ -23,6 +23,15 @@ export function devFrameStyle(): React.CSSProperties | undefined {
   return { width: w, maxWidth: w, height: h, minHeight: h, margin: '0 auto', border: 0 };
 }
 
+/** 不正な URL（`/r/%` など）でも落とさない。読めなければそのまま返し、ルーム ID の検査で「見つからない」にする。 */
+function safeDecode(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
+
 export function App() {
   const [path, setPath] = useState(() => location.pathname);
   useEffect(() => {
@@ -46,7 +55,7 @@ export function App() {
   }
   return (
     <div className="app" style={devFrameStyle()}>
-      {room !== null ? <Room key={room[1]} roomId={decodeURIComponent(room[1]!)} goHome={goHome} /> : <Home go={go} />}
+      {room !== null ? <Room key={room[1]} roomId={safeDecode(room[1]!)} goHome={goHome} /> : <Home go={go} />}
     </div>
   );
 }

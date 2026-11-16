@@ -158,7 +158,10 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
   // ---------- メッセージの欄 ----------
   let line = snap.line;
   const rr = game.returnRound;
-  if (phase === 'exchange') {
+  if (snap.notice !== null) {
+    // 拒否の理由・ホストの交代は、交換や返しの一周の案内より一時的に優先する（§7.13）
+    line = snap.notice;
+  } else if (phase === 'exchange') {
     line = mine !== null && mine.kind === 'exchangeGive' ? exchangePrompt(mine) : '交換中…';
   } else if (mine !== null && mine.kind === 'respond') {
     line = 'スペードの3で返しますか？';

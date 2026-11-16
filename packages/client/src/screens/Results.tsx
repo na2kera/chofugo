@@ -55,6 +55,11 @@ export function GameResult({ state, snap, api, finalGame }: ScreenProps & { fina
         })}
       </ol>
       <div className={s.grow} />
+      {snap.notice !== null && (
+        <p className={s.notice} role="status">
+          {snap.notice}
+        </p>
+      )}
       {finalGame ? (
         <button type="button" className="f btn" onClick={() => api.showMatchResult(state.matchId!)}>
           試合の結果へ
@@ -101,6 +106,11 @@ export function MatchResult({ state, snap, api }: ScreenProps) {
         })}
       </ol>
       <div className={s.grow} />
+      {snap.notice !== null && (
+        <p className={s.notice} role="status">
+          {snap.notice}
+        </p>
+      )}
       <div className={s.buttons}>
         {state.isHost && (
           <button type="button" className="f btn" disabled={!canAct} onClick={() => api.send({ type: 'rematch', matchId: state.matchId! }, 'rematch')}>
