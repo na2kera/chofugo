@@ -109,6 +109,14 @@ export function tradeReady(task: Pick<ChoiceTask, 'max'>, hand: readonly CardId[
   return picked.filter((x) => hand.includes(x)).length === n;
 }
 
+/**
+ * 闇市の相手・Q ボンバーの数字のボタンの枠。選んでいるときは金の塗り（「N枚を出す」と同じ `btn`）、
+ * ふだんは金の線の枠（`btn2`）。特権のスキップの ON（abilityBarFrame）と同じ見分け方（client-assumptions J5・J6）。
+ */
+export function pickFrame(on: boolean): 'btn' | 'btn2' {
+  return on ? 'btn' : 'btn2';
+}
+
 // ---------- Q ボンバー（design-4 §4.2） ----------
 
 /** 宣言できるもの（3〜2 の13個とジョーカー）の並び。 */

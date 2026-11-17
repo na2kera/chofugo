@@ -12,6 +12,7 @@ import {
   choicePrompt,
   chooseBody,
   nextGift,
+  pickFrame,
   SKIP_CHOOSE_BODY,
   toggleCall,
   toggleChoice,
@@ -123,6 +124,13 @@ describe('闇市の枚数の決まり（decisions §19.3）', () => {
     expect(trimForTrade(['club-3', 'spade-6'], null)).toEqual(['club-3', 'spade-6']);
     // 相手を選んだあとは、ちょうどの枚数を上限に選ぶ（超えたらいちばん前のカードと入れ替え）
     expect(toggleChoice({ max: 1 }, hand, ['spade-6'], 'club-3')).toEqual(['club-3']);
+  });
+});
+
+describe('闇市の相手・Q ボンバーの数字のボタンの枠（client-assumptions J5・J6）', () => {
+  it('選んでいるボタンだけ金の塗り（btn）、選んでいないボタンは金の線の枠（btn2）', () => {
+    expect(pickFrame(true)).toBe('btn');
+    expect(pickFrame(false)).toBe('btn2');
   });
 });
 

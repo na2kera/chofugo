@@ -111,7 +111,7 @@
 /* 闇市の相手のボタン（第2段階、design-4 §4.2）：強奪の枠の名前のボタンと同じ大きさ。名前は枠の幅で切り、残り枚数は必ず見せる */
 /* グローバルの .btn2（display: grid）に読み込み順によらず勝つよう、.targets の中で指定する */
 .targets .target {
-  /* 選んだとき（f hot hi）はグローバルの .btn2 が外れるので、余白と字間を自前で持ち、押しても文字がずれないようにする */
+  /* 選んだとき（f btn）と選んでいないとき（f btn2）で文字がずれないよう、余白と字間を自前で持つ */
   padding: 0 8px;
   letter-spacing: 2px;
   display: flex;
@@ -126,4 +126,17 @@
 }
 .targetCount {
   flex: none;
+}
+
+/* 闇市の相手・Q ボンバーの数字の、選んでいるボタン（金の塗りの .btn、client-assumptions J5・J6）。
+   グローバルの .btn（min-height 52px・padding 0 8px・letter-spacing 2px）に読み込み順によらず勝つよう、2つのクラスで指定し、
+   選んでいないとき（.btn2）と同じ大きさ・文字の位置にする（数字の升は 44px・余白と字間 0、相手のボタンは高さ 44px。余白と字間は .targets .target） */
+.rank.picked {
+  min-height: 44px;
+  height: 44px;
+  padding: 0;
+  letter-spacing: 0;
+}
+.target.picked {
+  min-height: 44px;
 }

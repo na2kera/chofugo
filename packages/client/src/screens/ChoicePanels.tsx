@@ -1,10 +1,10 @@
 // 選択の待ちのうち、場の枠の位置に枠を出すもの（design-4 §4.2）。
 // 闇市は強奪の枠と同じ形（相手の名前のボタンを縦に並べる）、Q ボンバーは独裁の枠と同じ形（数字のボタンを7列）。
-// 見た目は特権の選択の枠（Abilities.module.css）と同じクラスを使う。選んでいるボタンは、特権のボタンの開いている形（f hot hi）。
+// 見た目は特権の選択の枠（Abilities.module.css）と同じクラスを使う。選んでいるボタンは金の塗り（f btn。「N枚を出す」と同じ枠）、選んでいないボタンは金の線の枠（f btn2）。
 // 「使わない」「宣言しない」と送るボタンは、ほかの選択と同じく画面の下のボタンの欄に出す。
 
 import type { CallRank, SeatId } from '@chofugo/engine';
-import { CALL_RANKS, callLabel, callPrompt, TRADE_PROMPT, tradeTargetCount } from '../lib/choice.ts';
+import { CALL_RANKS, callLabel, callPrompt, pickFrame, TRADE_PROMPT, tradeTargetCount } from '../lib/choice.ts';
 import s from './Abilities.module.css';
 
 /** 闇市：相手を選ぶ枠。ボタンは名前と残り枚数。もう一度押すと外れる。 */
@@ -29,11 +29,12 @@ export function TradePanel({
       <div className={s.targets}>
         {targets.map((t) => {
           const on = target === t;
+          const frame = pickFrame(on);
           return (
             <button
               key={t}
               type="button"
-              className={`f ${on ? 'hot hi' : 'btn2'} ${s.btn} ${s.target}`}
+              className={`f ${frame} ${s.btn} ${s.target}${frame === 'btn' ? ` ${s.picked}` : ''}`}
               aria-pressed={on}
               disabled={disabled}
               onClick={() => onTarget(on ? null : t)}
@@ -62,11 +63,12 @@ export function CallPanel({
 }) {
   const btn = (r: CallRank, extra = '') => {
     const on = picked.includes(r);
+    const frame = pickFrame(on);
     return (
       <button
         key={String(r)}
         type="button"
-        className={`f ${on ? 'hot hi' : 'btn2'} ${s.rank} ${extra}`}
+        className={`f ${frame} ${s.rank}${frame === 'btn' ? ` ${s.picked}` : ''} ${extra}`}
         aria-pressed={on}
         aria-label={r === 'joker' ? 'ジョーカー' : callLabel(r)}
         disabled={disabled}
