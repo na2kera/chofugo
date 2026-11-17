@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { createMatch } from '@chofugo/engine';
 import { DEFAULT_TIMING } from '../src/timing.ts';
-import { ALL_RULE_IDS } from '@chofugo/engine';
+import { ALL_RULE_IDS, STAGE2_RULE_IDS } from '@chofugo/engine';
 import { buildMatchConfig, deadlineProblems, initialRoom, isCurrentFormat, modeHasAbilities, normalizeRules, keepSeatDeadlinesOnRejoin, pause, rejoinKind, resetSeatDeadlines, resetSeatDeadlinesOnAwayReturn, resume, settleDeadlines, switchSeatDeadlinesToBot, STATE_FORMAT, syncDeadlines } from '../src/state.ts';
 
 describe('normalizeRules', () => {
@@ -12,9 +12,17 @@ describe('normalizeRules', () => {
     expect(normalizeRules('custom', ['block_flush_with_4', 'skip_on_k'])).toEqual(['skip_on_k']);
     expect(normalizeRules('custom', ['skip_on_k', 'block_flush_with_4', 'flush_on_8'])).toEqual(['flush_on_8', 'block_flush_with_4', 'skip_on_k']);
     expect(normalizeRules('daifugo', [])).toEqual([]);
+    // 6戻しは J バックが前提（design-4 §2.8）
+    expect(normalizeRules('custom', ['cancel_reverse_on_6'])).toEqual([]);
+    expect(normalizeRules('custom', ['cancel_reverse_on_6', 'temp_reverse_on_j'])).toEqual(['temp_reverse_on_j', 'cancel_reverse_on_6']);
+    // 大富豪モードでは特殊の8種は選べない
+    expect(normalizeRules('daifugo', [...STAGE2_RULE_IDS, 'runs'])).toEqual(['runs']);
+    // カスタムは24種すべてを選べる
+    expect(normalizeRules('custom', [...ALL_RULE_IDS].reverse())).toEqual([...ALL_RULE_IDS]);
+    expect(ALL_RULE_IDS.length).toBe(24);
   });
 
-  it('超富豪モードは送られたルールを使わず16種すべてにする（design-3 §3.1）', () => {
+  it('超富豪モードは送られたルールを使わず24種すべてにする（design-3 §3.1、design-4 §3）', () => {
     expect(normalizeRules('chofugo', [])).toEqual([...ALL_RULE_IDS]);
     expect(normalizeRules('chofugo', ['runs'])).toEqual([...ALL_RULE_IDS]);
     expect(modeHasAbilities('chofugo')).toBe(true);
@@ -38,11 +46,13 @@ describe('保存の形式の番号', () => {
   it('いまの番号だけを受け付ける', () => {
     const s = initialRoom('r', 0, { ...DEFAULT_TIMING });
     expect(s.v).toBe(STATE_FORMAT);
-    expect(STATE_FORMAT).toBe(4);
+    expect(STATE_FORMAT).toBe(5);
     expect(isCurrentFormat(s)).toBe(true);
     expect(isCurrentFormat({ ...s, v: 1 })).toBe(false);
     expect(isCurrentFormat({ ...s, v: 2 })).toBe(false);
     expect(isCurrentFormat({ ...s, v: 3 })).toBe(false);
+    // 第2段階の前（形式 4）のルームも失効の扱い（design-4 §3）
+    expect(isCurrentFormat({ ...s, v: 4 })).toBe(false);
     const { v: _v, ...noV } = s;
     expect(isCurrentFormat(noV)).toBe(false);
     expect(isCurrentFormat(null)).toBe(false);
@@ -96,13 +106,16 @@ describe('deadlineProblems', () => {
   });
 });
 
+/** 期限のテストと性質テストの試合の設定：24種すべて ON・特権あり（第2段階、design-4 §3）。 */
+const ALL24_CONFIG = { matchId: 'm', rules: [...ALL_RULE_IDS], gameCount: 5, abilities: true };
+
 describe('syncDeadlines の continues（design-3 §6.1）', () => {
   const setup = () => {
     const s = initialRoom('r', 0, { ...DEFAULT_TIMING });
     s.pausedAt = null;
     s.seats[0] = { ...s.seats[0], kind: 'human', name: 'A', connected: true };
     s.seats[1] = { ...s.seats[1], kind: 'cpu', name: 'CPU 2' };
-    const r = createMatch({ matchId: 'm', rules: [...ALL_RULE_IDS], gameCount: 5, abilities: true }, [1, 2, 3, 4]);
+    const r = createMatch(ALL24_CONFIG, [1, 2, 3, 4]);
     if (!r.ok) throw new Error('createMatch');
     s.match = r.state;
     return s;
@@ -186,7 +199,7 @@ describe('つなぎ直したときの期限（decisions §18.1）', () => {
     const s = initialRoom('r', 0, { ...DEFAULT_TIMING });
     s.pausedAt = null;
     s.seats[0] = { ...s.seats[0], kind: 'human', name: 'A', connected: true };
-    const r = createMatch({ matchId: 'm', rules: [...ALL_RULE_IDS], gameCount: 5, abilities: true }, [1, 2, 3, 4]);
+    const r = createMatch(ALL24_CONFIG, [1, 2, 3, 4]);
     if (!r.ok) throw new Error('createMatch');
     s.match = r.state;
     s.match.game.awaiting = [{ id: 100, seat: 0, kind: 'turn', timer: 'turn' }];
@@ -283,7 +296,7 @@ describe('代役への切り替えと、CPU の特権のあとの印（decisions
     const s = initialRoom('r', 0, { ...DEFAULT_TIMING });
     s.pausedAt = null;
     s.seats[0] = { ...s.seats[0], kind: 'human', name: 'A', connected: true };
-    const r = createMatch({ matchId: 'm', rules: [...ALL_RULE_IDS], gameCount: 5, abilities: true }, [1, 2, 3, 4]);
+    const r = createMatch(ALL24_CONFIG, [1, 2, 3, 4]);
     if (!r.ok) throw new Error('createMatch');
     s.match = r.state;
     s.match.game.awaiting = [{ id: 1, seat: 0, kind: 'turn', timer: 'turn' }];
@@ -375,6 +388,9 @@ describe('代役への切り替えと、CPU の特権のあとの印（decisions
       t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
+    // 設定は24種すべて ON・特権あり（第2段階で24種に増えた。design-4 §3）
+    expect(setup().match.config.rules).toEqual([...ALL_RULE_IDS]);
+    expect(ALL_RULE_IDS.length).toBe(24);
     const stats = { scenarios: 0, extended: 0, awayReturns: 0, keepReturns: 0, pauses: 0, botContinues: 0, humanContinues: 0, expired: 0, backAfterBotContinue: 0, finishedAfter: 0 };
     for (let seed = 1; seed <= 800; seed++) {
       const rnd = mulberry(seed);

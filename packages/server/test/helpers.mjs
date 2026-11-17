@@ -16,9 +16,9 @@ export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * テストの開発サーバーのポート（19480〜19489）。インスペクターはその +10（19490〜19499）。
  * 同じ機械の別のプロジェクトと衝突しないよう、この範囲だけを使う。
  * ファイルは1つずつ順に実行する（vitest.config の fileParallelism: false）ので、rejoin は connection と同じポートを使う
- * （19490 にすると、インスペクターが範囲の外の 19500 になるため）。
+ * （19490 にすると、インスペクターが範囲の外の 19500 になるため）。第2段階の stage2 も同じ理由で choice と同じポートを使う。
  */
-export const PORTS = { match: 19480, cpu: 19481, connection: 19482, restart: 19483, prod: 19484, review: 19485, custom: 19486, choice: 19487, chofugo: 19488, chofugo2: 19489, rejoin: 19482 };
+export const PORTS = { match: 19480, cpu: 19481, connection: 19482, restart: 19483, prod: 19484, review: 19485, custom: 19486, choice: 19487, chofugo: 19488, chofugo2: 19489, rejoin: 19482, stage2: 19487 };
 
 /** 開発サーバーを起動する。persistDir を渡すと、止めて起動し直しても同じストレージを使う。 */
 /** testMode: false なら CHOFUGO_TEST_MODE を渡さない（本番と同じ設定で起動する）。 */
@@ -252,7 +252,7 @@ export class Client {
     const mine = this.state?.view?.mine;
     if (!mine || this.acted.has(this.actKey(mine))) return;
     this.acted.add(this.actKey(mine));
-    const action = chooseAction(mine, this.state.view.game?.hand ?? []);
+    const action = chooseAction(mine, this.state.view.game?.hand ?? [], this.state.view.game);
     const go = () => {
       if (this.ws.readyState !== WebSocket.OPEN) return;
       const id = this.send({ type: 'action', action });
@@ -300,8 +300,32 @@ export async function allDeadlineProblems(base) {
   return out;
 }
 
-/** 7渡し・10捨ての選択：手札からでたらめに 0〜max 枚。 */
-export function chooseCards(mine, hand) {
+/** Q ボンバーで宣言できるもの（engine の CallRank）。 */
+export const CALL_RANKS = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 'joker'];
+
+/**
+ * 選択：種類ごとに正しい形の操作をでたらめに作る（design-4 §6.5。種類は待ちのルールから決める）。
+ * 7渡し・10捨て・銀河鉄道は手札から 0〜max 枚。闇市は「使わない」か、targets からでたらめな相手と、ちょうど
+ * min(max, 自分の枚数, 相手の枚数) 枚（相手の枚数は game.handCounts）。Q ボンバーは 0〜max 個の数字（cards は空）。
+ */
+export function chooseCards(mine, hand, game) {
+  if (mine.rule === 'triple_a_trade') {
+    const targets = mine.targets ?? [];
+    if (targets.length === 0 || Math.random() < 0.3) return { type: 'choose', awaitId: mine.awaitId, cards: [] };
+    const target = pick(targets);
+    const n = Math.min(mine.max, hand.length, game.handCounts[target]);
+    const pool = hand.slice();
+    const cards = [];
+    while (cards.length < n) cards.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+    return { type: 'choose', awaitId: mine.awaitId, cards, target };
+  }
+  if (mine.rule === 'call_discard_on_q') {
+    const pool = CALL_RANKS.slice();
+    const n = Math.floor(Math.random() * (mine.max + 1));
+    const ranks = [];
+    while (ranks.length < n) ranks.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+    return { type: 'choose', awaitId: mine.awaitId, cards: [], ranks };
+  }
   const pool = hand.slice();
   const n = Math.floor(Math.random() * (Math.min(mine.max, pool.length) + 1));
   const cards = [];
@@ -338,8 +362,8 @@ export function chooseAbilityUse(mine) {
  * 出せる手からでたらめに選ぶ。親は出せる手があればパスできない。
  * その3：特権の選択はでたらめに確定、手番では時々特権を使い、スキップを付けられる手には時々付ける。
  */
-export function chooseAction(mine, hand) {
-  if (mine.kind === 'choice') return chooseCards(mine, hand);
+export function chooseAction(mine, hand, game) {
+  if (mine.kind === 'choice') return chooseCards(mine, hand, game);
   if (mine.kind === 'abilitySelect') return chooseAbilities(mine);
   if (mine.kind === 'turn') {
     if (Math.random() < 0.5) {
@@ -407,6 +431,16 @@ export function checkNoLeak(clients) {
           if (!party && shown.length > 0) problems.push(`${e.ability} cards shown to non-party ${c.name}`);
           if (party && e.gameNo === gameNo) for (const x of shown) given.add(x);
         }
+        // 闇市で動いたカードは当事者だけ（design-4 §2.7）。当事者は、渡したカードも受け取ったカードも知っていてよい
+        if (e.type === 'trade') {
+          const party = e.from === me || e.to === me;
+          if (!party && (e.given !== null || e.taken !== null)) problems.push(`trade cards shown to non-party ${c.name}`);
+          if (party && (e.given === null || e.taken === null)) problems.push(`trade cards hidden from party ${c.name}`);
+          if (typeof e.count !== 'number') problems.push(`trade without count to ${c.name}`);
+          if (party && e.gameNo === gameNo) for (const x of [...(e.given ?? []), ...(e.taken ?? [])]) given.add(x);
+        }
+        // 銀河鉄道で捨て札から受け取ったカードは全員に見える（design-4 §2.4。捨て札は公開の情報）
+        if (e.type === 'salvage' && e.gameNo === gameNo) for (const x of e.took) given.add(x);
         if (e.type === 'exchange' || e.type === 'give') {
           if (e.cards !== null && e.from !== me && e.to !== me) problems.push(`${e.type} cards shown to non-party ${c.name}`);
           if (e.type === 'give' && e.cards === null && typeof e.count !== 'number') problems.push(`give without count to ${c.name}`);

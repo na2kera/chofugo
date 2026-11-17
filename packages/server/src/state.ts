@@ -27,9 +27,10 @@ import { humanTimerMs, type Timing } from './timing.ts';
  * 番号の違う保存済みのルームは、失効したルームと同じ扱いにする（再接続を拒否し、保存を消す。decisions §16.6）。
  * 1 = その1、2 = その2（設定の下書きに mode を足した。engine の MatchState も version 2）、
  * 3 = その3（mode に chofugo、engine の MatchState も version 3。design-3 §3.1）、
- * 4 = 期限に「つなぎ直しで1回延ばした」印（extended）と、秒数に rejoinMinMs を足した（decisions §18.1）。
+ * 4 = 期限に「つなぎ直しで1回延ばした」印（extended）と、秒数に rejoinMinMs を足した（decisions §18.1）、
+ * 5 = 第2段階（特殊ルール8種。engine の MatchState が version 4 になり、GameState に colorLock が増えた。design-4 §3）。
  */
-export const STATE_FORMAT = 4;
+export const STATE_FORMAT = 5;
 
 export type SeatRec = {
   kind: 'empty' | 'human' | 'cpu';
@@ -119,7 +120,7 @@ export function isCurrentFormat(v: unknown): v is RoomState {
   return typeof v === 'object' && v !== null && (v as { v?: unknown }).v === STATE_FORMAT;
 }
 
-/** モードで選べるルール（decisions §7）。超富豪モードは16種すべてで固定（decisions §17.5）。 */
+/** モードで選べるルール（decisions §7）。超富豪モードは24種すべてで固定（decisions §17.5、design-4 §3）。 */
 export function modeRuleIds(mode: GameMode): readonly RuleId[] {
   if (mode === 'daifugo') return DAIFUGO_MODE_RULE_IDS;
   return mode === 'custom' ? CUSTOM_MODE_RULE_IDS : ALL_RULE_IDS;
@@ -141,9 +142,9 @@ export function buildMatchConfig(matchId: string, src: { rules: readonly RuleId[
 /**
  * 設定のルールを正しい形に直す（design-2 §3.1。拒否はしない）。
  * 1. モードで選べるルール以外を除く。
- * 2. 前提を満たさないルール（8切りが OFF のときの4止め）を除く（前提の前提も、残らなくなるまで繰り返す）。
+ * 2. 前提を満たさないルール（8切りが OFF のときの4止め、J バックが OFF のときの6戻し）を除く（前提の前提も、残らなくなるまで繰り返す）。
  * 3. ALL_RULE_IDS の順に並べる。
- * 超富豪モードは、送られたルールを使わず16種すべてにする（design-3 §3.1）。
+ * 超富豪モードは、送られたルールを使わず24種すべてにする（design-3 §3.1、design-4 §3）。
  */
 export function normalizeRules(mode: GameMode, rules: readonly RuleId[]): RuleId[] {
   if (mode === 'chofugo') return ALL_RULE_IDS.slice();

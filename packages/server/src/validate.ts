@@ -44,7 +44,31 @@ function isCardIds(v: unknown, min: number, max: number): v is string[] {
   return true;
 }
 
-const TOKEN_RE = /^[A-Za-z0-9_-]{22,64}$/;
+/** 席の番号（0〜3 の整数）。 */
+function isSeatNo(v: unknown): v is number {
+  return typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 3;
+}
+
+/** Q ボンバーで宣言できる数字の最大の個数（3〜15 の13個と 'joker'）。 */
+const MAX_CALL_RANKS = 14;
+
+/**
+ * Q ボンバーの宣言の形（design-4 §3）：長さ14以下の穴のない配列で、各要素は 3〜15 の整数か 'joker'。
+ * 重複と個数の上限（出した枚数）は engine が確かめる。
+ */
+function parseCallRanks(v: unknown): (number | 'joker')[] | null {
+  if (!Array.isArray(v) || v.length > MAX_CALL_RANKS) return null;
+  const out: (number | 'joker')[] = [];
+  // 穴のある配列は for...of で undefined になり、下の検査で落ちる
+  for (const x of v) {
+    if (x === 'joker') out.push(x);
+    else if (typeof x === 'number' && Number.isInteger(x) && x >= 3 && x <= 15) out.push(x);
+    else return null;
+  }
+  return out;
+}
+
+const TOKEN_RE =/^[A-Za-z0-9_-]{22,64}$/;
 const MATCH_ID_RE = /^[A-Za-z0-9_-]{1,32}$/;
 
 function isMatchId(v: unknown): v is string {
@@ -119,13 +143,27 @@ function parseAction(v: unknown): ClientAction | null {
       if (!isCardIds(cards, 1, 54)) return null;
       return { type: 'respond', awaitId: v['awaitId'], cards: cards.slice() };
     }
-    case 'exchangeGive':
-    case 'choose': {
-      // choose の検査は exchangeGive と同じ（design-2 §3.2）
-      const type = v['type'];
+    case 'exchangeGive': {
       if (!onlyKeys(v, ['type', 'awaitId', 'cards']) || !isAwaitId(v['awaitId'])) return null;
       if (!isCardIds(v['cards'], 0, 54)) return null;
-      return { type, awaitId: v['awaitId'], cards: v['cards'].slice() };
+      return { type: 'exchangeGive', awaitId: v['awaitId'], cards: v['cards'].slice() };
+    }
+    case 'choose': {
+      // cards は exchangeGive と同じ（design-2 §3.2）。第2段階で target（闇市の相手）と ranks（Q ボンバーの宣言）を足した
+      // （design-4 §3）。どちらも省略できる。形だけを確かめ、中身（選べる相手か、枚数・個数が合うか）は engine が確かめる
+      if (!onlyKeys(v, ['type', 'awaitId', 'cards', 'target', 'ranks']) || !isAwaitId(v['awaitId'])) return null;
+      if (!isCardIds(v['cards'], 0, 54)) return null;
+      const a: ClientAction = { type: 'choose', awaitId: v['awaitId'], cards: v['cards'].slice() };
+      if ('target' in v) {
+        if (!isSeatNo(v['target'])) return null;
+        a.target = v['target'];
+      }
+      if ('ranks' in v) {
+        const ranks = parseCallRanks(v['ranks']);
+        if (ranks === null) return null;
+        a.ranks = ranks;
+      }
+      return a;
     }
     // その3（design-3 §3.2）。形だけを確かめ、中身（持っているか、使えるか）は engine が確かめる
     case 'selectAbilities': {
@@ -148,7 +186,7 @@ function parseAction(v: unknown): ClientAction | null {
       const a: ClientAction = { type: 'useAbility', awaitId: v['awaitId'], ability };
       if ('target' in v) {
         const t = v['target'];
-        if (typeof t !== 'number' || !Number.isInteger(t) || t < 0 || t > 3) return null;
+        if (!isSeatNo(t)) return null;
         a.target = t;
       }
       if ('card' in v) {

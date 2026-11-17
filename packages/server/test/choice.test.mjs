@@ -5,7 +5,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Client, createRoom, deadlineProblems, startServer, PORTS } from './helpers.mjs';
-import { detAction, findSeed, isSevenGroup, matchConfig } from './scenario.mjs';
+import { DetClient, detAction, findSeed, matchConfig } from './scenario.mjs';
 
 let server;
 beforeAll(async () => {
@@ -19,51 +19,6 @@ afterAll(async () => {
 const WAIT = 30_000;
 const RULES = ['give_on_7'];
 const CONFIG = matchConfig(RULES);
-
-/**
- * 決まった操作だけをする席（scenario.mjs の detAction）。7の組を優先して出す。
- * hold: true なら choice の待ちには何もしない（時間切れにする）。paused の間は何もしない（つなぎ直しの確認のため）。
- */
-class DetClient extends Client {
-  constructor(base, roomId, opts) {
-    super(base, roomId, opts);
-    this.hold = opts.hold ?? false;
-    this.paused = false;
-    /** ゲームの結果の画面で次のゲームを配らない（試合を終えるため）。 */
-    this.noNext = false;
-    /** 真を返したら、その state で操作する前に止まる。 */
-    this.pauseWhen = null;
-    this.auto = true;
-  }
-
-  checkPause() {
-    if (!this.paused && this.pauseWhen?.()) {
-      this.paused = true;
-      this.pauseWhen = null;
-    }
-    return this.paused;
-  }
-
-  maybeAct() {
-    if (this.checkPause()) return;
-    const mine = this.state?.view?.mine;
-    if (!mine || this.acted.has(this.actKey(mine))) return;
-    if (mine.kind === 'choice' && this.hold) return;
-    this.acted.add(this.actKey(mine));
-    const id = this.send({ type: 'action', action: detAction(mine, this.state.view.game.hand) });
-    (this.autoReqs ??= new Set()).add(id);
-  }
-
-  maybeNextGame() {
-    if (!this.checkPause() && !this.noNext) super.maybeNextGame();
-  }
-
-  resume() {
-    this.paused = false;
-    this.maybeAct();
-    if (this.autoHost && this.state) this.maybeNextGame();
-  }
-}
 
 const eventsOf = (cs) => cs.flatMap((c) => c.states.flatMap((s) => s.events));
 /** 出来事を番号で1つずつに（復帰した接続には全件がもう一度届く）。 */

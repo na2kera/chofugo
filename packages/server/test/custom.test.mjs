@@ -1,9 +1,9 @@
-// その2（カスタムモード）：設定の直し方、16種すべて ON の通しの試合、保存の形式の番号（design-2 §3.5、§6.5）。
+// その2（カスタムモード）：設定の直し方、24種すべて ON の通しの試合（第2段階、design-4 §3）、保存の形式の番号（design-2 §3.5、§6.5）。
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Client, checkNoLeak, createRoom, deadlineProblems, joinAll, startServer, testRoute, PORTS } from './helpers.mjs';
 
-// engine の ALL_RULE_IDS の順
+// engine の ALL_RULE_IDS の前の16種（第1段階、STAGE1_RULE_IDS）の順
 const ALL16 = [
   'flush_on_8',
   'block_flush_with_4',
@@ -22,6 +22,18 @@ const ALL16 = [
   'discard_on_10',
   'skip_on_k',
 ];
+// 第2段階の8種（design-4 §1 の並び。ALL_RULE_IDS の後ろ）
+const STAGE2 = [
+  'color_lock_on_5',
+  'cancel_reverse_on_6',
+  'triple6_revolution',
+  'triple4_purge',
+  'triple9_salvage',
+  'triple_a_trade',
+  'call_discard_on_q',
+  'quad2_instant_win',
+];
+const ALL24 = [...ALL16, ...STAGE2];
 const DAIFUGO8 = ['flush_on_8', 'revolution', 'temp_reverse_on_j', 'spade3_beats_joker', 'suit_lock', 'runs', 'forbidden_finish', 'dethrone'];
 
 let server;
@@ -62,8 +74,13 @@ describe('設定の直し方（design-2 §3.1、§6.5）', () => {
     await config(host, guest, { mode: 'custom', rules: ['block_flush_with_4', 'give_on_7'], gameCount: 10 }, { mode: 'custom', rules: ['give_on_7'], gameCount: 10 });
     // 8切りがあれば4止めは残る。並びは ALL_RULE_IDS の順に直る
     await config(host, guest, { mode: 'custom', rules: [...ALL16].reverse(), gameCount: null }, { mode: 'custom', rules: ALL16, gameCount: null });
-    // カスタムから大富豪へ切り替えると、応用のルールは外れる
-    await config(host, guest, { mode: 'daifugo', rules: ALL16, gameCount: null }, { mode: 'daifugo', rules: DAIFUGO8, gameCount: null });
+    // 24種もそのまま選べる（並びは ALL_RULE_IDS の順）
+    await config(host, guest, { mode: 'custom', rules: [...ALL24].reverse(), gameCount: null }, { mode: 'custom', rules: ALL24, gameCount: null });
+    // J バックなしの6戻しは外れる（前提、design-4 §2.8）。J バックがあれば残る
+    await config(host, guest, { mode: 'custom', rules: ['cancel_reverse_on_6', 'triple_a_trade'], gameCount: 5 }, { mode: 'custom', rules: ['triple_a_trade'], gameCount: 5 });
+    await config(host, guest, { mode: 'custom', rules: ['cancel_reverse_on_6', 'temp_reverse_on_j'], gameCount: 5 }, { mode: 'custom', rules: ['temp_reverse_on_j', 'cancel_reverse_on_6'], gameCount: 5 });
+    // カスタムから大富豪へ切り替えると、応用・特殊のルールは外れる
+    await config(host, guest, { mode: 'daifugo', rules: ALL24, gameCount: null }, { mode: 'daifugo', rules: DAIFUGO8, gameCount: null });
 
     // 形の違う値は、その1と同じく拒否する（保存は変わらない）
     const before = JSON.stringify(guest.state.room.config);
@@ -74,32 +91,33 @@ describe('設定の直し方（design-2 §3.1、§6.5）', () => {
       { type: 'setConfig', mode: 'custom', rules: [8], gameCount: 5 }, // 型の違う値
       { type: 'setConfig', mode: 'custom', rules: ['nope'], gameCount: 5 }, // 知らないルール
       { type: 'setConfig', mode: 'custom', rules: ['runs', 'runs'], gameCount: 5 }, // 重複
+      { type: 'setConfig', mode: 'custom', rules: [...ALL24, 'runs'], gameCount: 5 }, // 25個（重複を含む）
       { type: 'setConfig', mode: 'custom', rules: [], gameCount: '5' }, // 型の違うゲーム数
       { type: 'setConfig', mode: 1, rules: [], gameCount: 5 },
       { type: 'setConfig', mode: 'custom', rules: [], gameCount: 5, extra: true },
     ];
     for (const m of bad) expect((await host.waitError(host.send(m))).code).toBe('badMessage');
     // ホスト以外は、形が正しくても notHost
-    expect((await guest.waitError(guest.send({ type: 'setConfig', mode: 'custom', rules: ALL16, gameCount: 5 }))).code).toBe('notHost');
+    expect((await guest.waitError(guest.send({ type: 'setConfig', mode: 'custom', rules: ALL24, gameCount: 5 }))).code).toBe('notHost');
     expect(JSON.stringify(host.state.room.config)).toBe(before);
     host.close();
     guest.close();
   });
 });
 
-describe('16種すべて ON（カスタムモード）', () => {
+describe('24種すべて ON（カスタムモード）', () => {
   it('4接続で1試合を最後まで進める', async () => {
     const roomId = await createRoom(server.base, { cpuDelayMs: 20 });
     const clients = [0, 1, 2, 3].map((i) => new Client(server.base, roomId, { name: `P${i}`, autoHost: true }));
     await joinAll(clients);
     const [host] = clients;
-    await config(host, clients[3], { mode: 'custom', rules: ALL16, gameCount: 5 }, { mode: 'custom', rules: ALL16, gameCount: 5 });
+    await config(host, clients[3], { mode: 'custom', rules: ALL24, gameCount: 5 }, { mode: 'custom', rules: ALL24, gameCount: 5 });
     for (const c of clients) c.auto = true;
     host.send({ type: 'start' });
     await Promise.all(clients.map((c) => c.waitState((s) => s.matchPhase === 'matchResult', 170_000, 'matchResult')));
     expect(host.state.view.results.length).toBe(5);
-    expect(host.state.view.rules).toEqual(ALL16);
-    expect(host.state.room.config).toEqual({ mode: 'custom', rules: ALL16, gameCount: 5 });
+    expect(host.state.view.rules).toEqual(ALL24);
+    expect(host.state.room.config).toEqual({ mode: 'custom', rules: ALL24, gameCount: 5 });
     for (const r of host.state.view.results) expect(r.deltas.reduce((a, b) => a + b, 0)).toBe(0);
     // 自動で選んだ操作（choose を含む）が engine に拒否されていない
     for (const c of clients) expect(c.rejectedOwn).toEqual([]);
@@ -134,7 +152,16 @@ describe('保存の形式の番号（design-2 §3.3）', () => {
     // CPU（と A）の操作が1つ以上記録され、期限のアラームがある
     for (let i = 0; i < 100; i++) {
       const st = await testRoute(server.base, roomId, 'storage');
-      if (st.actions > 0 && st.alarm !== null) return { roomId, A, before: st };
+      if (st.actions > 0 && st.alarm !== null) {
+        // 書き換えたあとに、アラーム（CPU の約20ms の期限）や A の自動の操作が先に届くと、確かめる前にルームが閉じる。
+        // 確かめる間だけ止める：A は操作せず、アラームは60秒遅らせる（アラームそのものは残る）
+        A.auto = false;
+        await testRoute(server.base, roomId, 'timing', { testAlarmLagMs: 60_000 });
+        await new Promise((r) => setTimeout(r, 100));
+        const quiet = await testRoute(server.base, roomId, 'storage');
+        expect(quiet.alarm).toBeTypeOf('number');
+        return { roomId, A, before: quiet };
+      }
       await new Promise((r) => setTimeout(r, 50));
     }
     throw new Error('actions were not logged');

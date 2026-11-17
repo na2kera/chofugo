@@ -17,6 +17,7 @@ import {
   viewFor,
   type Action,
   type AbilityId,
+  type CallRank,
   type GameEvent,
   type MatchConfig,
   type Rank,
@@ -305,7 +306,7 @@ export class Room extends DurableObject<Env> {
     this.requireTestMode();
     const s = this.load();
     if (s === null || s === 'stale') return false;
-    const old = { ...s, v: 3 };
+    const old = { ...s, v: 4 };
     this.ctx.storage.kv.put(ROOM_KEY, old);
     return true;
   }
@@ -533,9 +534,15 @@ export class Room extends DurableObject<Env> {
         case 'exchangeGive':
           action = { type: 'exchangeGive', seat, awaitId: a.awaitId, cards: a.cards };
           break;
-        case 'choose':
-          action = { type: 'choose', seat, awaitId: a.awaitId, cards: a.cards };
+        case 'choose': {
+          // 闇市の相手（target）と Q ボンバーの宣言（ranks）は、あれば渡す（なければ項目ごと付けない、design-4 §6.1）。
+          // 形は validate.ts で確かめ済み。中身は engine が確かめる（合わなければ invalidChoice）
+          const c: Action = { type: 'choose', seat, awaitId: a.awaitId, cards: a.cards };
+          if (a.target !== undefined) c.target = a.target as SeatId;
+          if (a.ranks !== undefined) c.ranks = a.ranks as CallRank[];
+          action = c;
           break;
+        }
         // その3（design-3 §3.2）。形は validate.ts で確かめ済み。中身は engine が確かめる（知らない特権は invalidAbility）
         case 'selectAbilities':
           action = { type: 'selectAbilities', seat, awaitId: a.awaitId, abilities: a.abilities as AbilityId[], confirm: a.confirm };

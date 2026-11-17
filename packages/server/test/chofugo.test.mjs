@@ -1,10 +1,10 @@
-// その3（超富豪モード）：設定、4接続の通しの試合、「もう一度」、人間の特権と期限、選択の途中の保存と時間切れ、
+// その3（超富豪モード。第2段階から24種すべて ON、design-4 §3）：設定、4接続の通しの試合、「もう一度」、人間の特権と期限、選択の途中の保存と時間切れ、
 // 選択の途中の切断と代役・復帰・全員不在からの再開（design-3 §3.4、§6.1、§6.2、§6.5、§6.6、§6.8）。
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ALL_ABILITIES, Client, HolderClient, PassiveClient, checkNoLeak, createRoom, deadlineProblems, startServer, testRoute, PORTS } from './helpers.mjs';
 
-// engine の ALL_RULE_IDS の順
+// engine の ALL_RULE_IDS の前の16種（第1段階、STAGE1_RULE_IDS）の順
 const ALL16 = [
   'flush_on_8',
   'block_flush_with_4',
@@ -23,6 +23,18 @@ const ALL16 = [
   'discard_on_10',
   'skip_on_k',
 ];
+// 第2段階の8種（design-4 §1 の並び。ALL_RULE_IDS の後ろ）
+const STAGE2 = [
+  'color_lock_on_5',
+  'cancel_reverse_on_6',
+  'triple6_revolution',
+  'triple4_purge',
+  'triple9_salvage',
+  'triple_a_trade',
+  'call_discard_on_q',
+  'quad2_instant_win',
+];
+const ALL24 = [...ALL16, ...STAGE2];
 
 let server;
 beforeAll(async () => {
@@ -59,19 +71,19 @@ async function holderRoom(timing, holderOpts = {}) {
 }
 
 describe('設定（design-3 §3.1）', () => {
-  it('chofugo の setConfig で、ルールが16種すべてに直る', async () => {
+  it('chofugo の setConfig で、ルールが24種すべてに直る', async () => {
     const roomId = await createRoom(server.base);
     const host = await join(new Client(server.base, roomId, { name: 'host' }));
     const guest = await join(new Client(server.base, roomId, { name: 'guest' }));
     host.send({ type: 'setConfig', mode: 'chofugo', rules: ['runs'], gameCount: 10 });
     await guest.waitState((s) => s.room.config.mode === 'chofugo');
-    expect(guest.state.room.config).toEqual({ mode: 'chofugo', rules: ALL16, gameCount: 10 });
-    // 送られたルールは使わない（空でも16種）
+    expect(guest.state.room.config).toEqual({ mode: 'chofugo', rules: ALL24, gameCount: 10 });
+    // 送られたルールは使わない（空でも24種）
     host.send({ type: 'setConfig', mode: 'chofugo', rules: [], gameCount: 5 });
     await guest.waitState((s) => s.room.config.gameCount === 5);
-    expect(guest.state.room.config.rules).toEqual(ALL16);
+    expect(guest.state.room.config.rules).toEqual(ALL24);
     // 大富豪モードへ戻すと、その2と同じく直る
-    host.send({ type: 'setConfig', mode: 'daifugo', rules: ALL16, gameCount: 5 });
+    host.send({ type: 'setConfig', mode: 'daifugo', rules: ALL24, gameCount: 5 });
     await guest.waitState((s) => s.room.config.mode === 'daifugo');
     expect(guest.state.room.config.rules).toEqual(['flush_on_8', 'revolution', 'temp_reverse_on_j', 'spade3_beats_joker', 'suit_lock', 'runs', 'forbidden_finish', 'dethrone']);
     // 形の誤り
@@ -106,7 +118,7 @@ describe('超富豪モードの通しの試合', () => {
     host.send({ type: 'start' });
     await Promise.all(clients.map((c) => c.waitState((s) => s.matchPhase === 'matchResult', 170_000, 'matchResult')));
     expect(host.state.view.results.length).toBe(5);
-    expect(host.state.view.rules).toEqual(ALL16);
+    expect(host.state.view.rules).toEqual(ALL24);
     for (const c of clients) expect(c.rejectedOwn).toEqual([]);
 
     const events = eventsOf(host);
@@ -169,7 +181,7 @@ describe('超富豪モードの通しの試合', () => {
     host.send({ type: 'rematch' });
     const first = await host.waitState((s) => s.matchId !== oldMatch && s.matchPhase !== null, 10_000, 'rematch');
     const newMatch = first.matchId;
-    expect(first.room.config).toEqual({ mode: 'chofugo', rules: ALL16, gameCount: null });
+    expect(first.room.config).toEqual({ mode: 'chofugo', rules: ALL24, gameCount: null });
     // 新しい試合の state の出来事だけを見る（eventsOf は前の試合の分も含むため）
     const eventsOfMatch = (c) => c.states.filter((s) => s.matchId === newMatch).flatMap((s) => s.events);
     const sel = await host.waitFor(() => eventsOfMatch(host).find((e) => e.type === 'abilitySelectStart' && e.gameNo === 2), 90_000, 'ability select in game 2 after rematch');

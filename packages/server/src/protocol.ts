@@ -36,8 +36,8 @@ export type HelloMessage = {
 
 /**
  * ロビーのモード（design-2 §3.1）。選べるルールの範囲を決めるロビーの概念で、engine の MatchConfig にはない。
- * daifugo = 定番8種（DAIFUGO_MODE_RULE_IDS）、custom = 16種（CUSTOM_MODE_RULE_IDS）、
- * chofugo = 超富豪モード（その3。ルールは16種すべてで固定、特権あり。engine には abilities: true で渡す）。
+ * daifugo = 定番8種（DAIFUGO_MODE_RULE_IDS）、custom = 24種（CUSTOM_MODE_RULE_IDS、第2段階から）、
+ * chofugo = 超富豪モード（その3。ルールは24種すべてで固定、特権あり。engine には abilities: true で渡す）。
  */
 export type GameMode = 'daifugo' | 'custom' | 'chofugo';
 
@@ -45,8 +45,8 @@ export type GameMode = 'daifugo' | 'custom' | 'chofugo';
  * ホストだけ、ロビーの間だけ。モード・ルールの ON/OFF・ゲーム数。
  * 形（知らないモード、配列でない rules、知らないルール ID、重複、型の違う値）は確かめて拒否する（badMessage）。
  * 形が正しければ、server が中身を直してから保存する（design-2 §3.1、§6.5）：
- * モードで選べないルールを除く → 前提を満たさないルール（8切りのない4止め）を除く → ALL_RULE_IDS の順に並べる。
- * chofugo では、送られた rules は使わず16種すべてにする（design-3 §3.1）。
+ * モードで選べないルールを除く → 前提を満たさないルール（8切りのない4止め、J バックのない6戻し）を除く → ALL_RULE_IDS の順に並べる。
+ * chofugo では、送られた rules は使わず24種すべてにする（design-3 §3.1、design-4 §3）。
  * 直した結果は次の state の room.config で届く。
  */
 export type SetConfigMessage = {
