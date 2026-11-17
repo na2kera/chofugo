@@ -1,0 +1,287 @@
+# 超富豪 — 設計書（第2段階：特殊ルール8種）
+
+> 対象は `decisions.md` §15 の第2段階。ルールの中身は `decisions.md`（§15、§19）が正。
+> その3（`design-3.md`）までの作りを前提に、**足すものと変えるものだけ**を書く。
+
+## 1. 範囲
+
+**入れるもの**
+
+- ルール8種：5色縛り（`color_lock_on_5`）、6戻し（`cancel_reverse_on_6`）、オーメン（`triple6_revolution`）、DEATH（`triple4_purge`）、銀河鉄道（`triple9_salvage`）、闇市（`triple_a_trade`）、Q ボンバー（`call_discard_on_q`）、大革命（`quad2_instant_win`）
+- カスタムモード：24種から選べる。ロビーは「定番」「応用」「特殊」の3つに分ける。
+- 超富豪モード：24種すべて ON で固定。
+
+**変えないもの**
+
+- 技術構成とバージョン。パッケージは足さない。
+- 大富豪モードの挙動。
+- 第1段階の16種だけの試合の挙動（特権のありなしにかかわらず、出来事の列と乱数の進み方まで同じ）。
+
+## 2. engine
+
+### 2.1 型の追加（`types.ts`）
+
+```ts
+// ALL_RULE_IDS の後ろに8つ足す（前の16個の並びは変えない）
+export const STAGE1_RULE_IDS: readonly RuleId[]; // 前の16個（その2までの記録・テストが使う）
+export const STAGE2_RULE_IDS: readonly RuleId[]; // 足した8個
+// CUSTOM_MODE_RULE_IDS = ALL_RULE_IDS（24種）
+
+export type Color = 'red' | 'black';          // 赤 = ハート・ダイヤ、黒 = スペード・クラブ
+export type CallRank = Rank | 'joker';        // Q ボンバーで宣言できるもの
+
+ViolationKind に 'colorLock' を足す。
+
+Effect:
+  | { type: 'toggleRevolution'; rule?: RuleId }            // rule = オーメン（出来事に載せる）
+  | { type: 'setTempReverse'; active: boolean; rule?: RuleId } // rule = 6戻し（出来事に載せる）
+  | { type: 'setColorLock'; color: Color }
+  | { type: 'clearColorLock' }
+  | { type: 'purge'; rule: RuleId }                         // DEATH
+  | { type: 'instantWin'; rule: RuleId }                    // 大革命
+  // 銀河鉄道・闇市・Q ボンバーは、既存の { type: 'handChoice'; rule; max } を使う
+
+GameState に colorLock: Color | null を足す。
+MatchState.version は 4。
+
+Action の choose に2つ足す:
+  | { type: 'choose'; seat; awaitId; cards: CardId[]; target?: SeatId; ranks?: CallRank[] }
+
+GameEventBody:
+  | { type: 'revolution'; active: boolean; rule?: RuleId }
+  | { type: 'tempReverse'; active: boolean; rule?: RuleId }
+  | { type: 'colorLock'; color: Color }
+  | { type: 'purge'; by: SeatId; discards: { seat: SeatId; card: CardId }[] }
+  | { type: 'salvage'; seat: SeatId; put: CardId[]; took: CardId[] }
+  | { type: 'trade'; from: SeatId; to: SeatId; given: CardId[]; taken: CardId[] }   // 中身は当事者だけ
+  | { type: 'callDiscard'; seat: SeatId; ranks: CallRank[]; discards: { seat: SeatId; cards: CardId[] }[] }
+  | { type: 'instantWin'; seat: SeatId; discarded: CardId[] }
+
+VisibleEventBody の trade:
+  | { type: 'trade'; from; to; count: number; given: CardId[] | null; taken: CardId[] | null }
+
+MyAwaiting の choice に targets?: SeatId[] を足す（闇市で選べる相手）。
+GameView に colorLock: Color | null を足す。
+```
+
+`ChoicePending` の形は変えない（`rule`・`seat`・`max`・`to`・`rest`）。`max` の意味はルールで決まる（§2.4）。
+
+### 2.2 モジュールのフック
+
+- `choiceTarget` を `choiceKind` に名前を変え、値を増やす：`'give' | 'discard' | 'salvage' | 'trade' | 'call'`。既存の7渡し（`give`）・10捨て（`discard`）はそのまま。
+- 役の判定は1つの関数にまとめる（`rules/roles.ts`）：`isRealGroup(play, rank, count)` = 組で、数字が `rank`、枚数がちょうど `count`、ジョーカーなし。役のモジュールはすべて `played.via === 'turn'` のときだけ発動する。
+- `RULE_MODULES` には、16種の後ろに §1 の並びで足す。
+
+### 2.3 効果の順番（`runEffects`）
+
+優先順を次のとおりにする（小さいほうが先。既存の効果どうしの順は変わらない）。
+
+| 順 | 効果 |
+|---|---|
+| 0 | `toggleRevolution` |
+| 1 | 状態の効果（既存のもの、`setColorLock`、`clearColorLock`） |
+| 2 | `handChoice`（7渡し・10捨て・銀河鉄道・闇市・Q ボンバー）、`purge` |
+| 3 | `instantWin` |
+| 4 | `finishCheck`、`forceLast` |
+| 5 | `returnRound` |
+| 6 | `skip` |
+| 7 | `flush` |
+
+これで §15.1 の「数字の効果を先に、そのあとで役の効果」になる（9の本物3枚：9リバース → 銀河鉄道。6の本物3枚：オーメンの革命 → 6戻し）。
+
+**`finishCheck` を「全員の上がりの判定」に広げる**（§15.1）。
+
+- 出した人、そのあと進行方向で出した人に近い順に、まだ残っている席を見て、手札が0枚なら `placeSeat` で順位を確定する。
+- 理由は、出した人が `foul`（出す直前に判定した反則上がり）のときだけ `foul`、ほかはすべて `finish`。捨てて0枚になった人は反則にならない。
+- 途中でゲームが終わったら（`placeSeat` が true）、そこで止める。
+- 第1段階の16種だけの試合では、この時点で手札が0枚になりうるのは出した人だけなので、動きは変わらない。
+- 都落ちは `placeSeat` の中で今までどおり起きる。前の大富豪が同時に0枚になっていても、先に別の人が1位に確定すれば都落ちする（§15.1「ふつうに都落ちが起きる」）。
+- 手札を動かす効果（順2・3）はすべて `finishCheck` より前なので、1位が確定した時点の `firstPlaceHandCounts` は「効果をすべて処理し終えたあとの枚数」になる（§15.1）。
+
+### 2.4 ルールごとの作り
+
+**5色縛り（`color_lock_on_5`）**
+
+- `afterPlay`：手番で出した5の組（`play.rank === 5`。ジョーカーを混ぜてもよい）で、いま色縛りがなく、本物の5がすべて同じ色のとき、`setColorLock`。階段では発動しない。
+- `restrictPlay`：色縛り中は、手の本物のカードがすべてその色でなければ `colorLock`。ジョーカーはどちらの色としても出せる（マークの決め直しはしない）。
+- `onFieldCleared`：`clearColorLock`。
+- 砂嵐の `playIgnores`、スペ3返しと4止めの `returnIgnores` に `colorLock` を足す。
+- 出来事 `colorLock` は成立したときだけ出す。
+
+**6戻し（`cancel_reverse_on_6`）**
+
+- `requires: ['temp_reverse_on_j']`。
+- `afterPlay`：手番で出した6の組（ジョーカーを混ぜてもよい）で、いま J バック中なら `{ type: 'setTempReverse', active: false, rule: 'cancel_reverse_on_6' }`。出来事 `tempReverse` に `rule` が載る（場が流れたときの解除には載らない）。
+- 6が出せるかどうかは、出す時点の向きで決まる（今までどおり）。
+
+**オーメン（`triple6_revolution`）**
+
+- `afterPlay`：本物の6がちょうど3枚 → `{ type: 'toggleRevolution', rule: 'triple6_revolution' }`。出来事 `revolution` に `rule` が載る。
+- 「革命」（`revolution`）が OFF でも単独で働く（decisions §19.1）。
+
+**DEATH（`triple4_purge`）**
+
+- `afterPlay`：本物の4がちょうど3枚 → `{ type: 'purge', rule }`。
+- `runEffects` の `purge`：出した人以外の残っている席を、進行方向で近い順に見て、手札の「いちばん強いカード」を1枚、捨て札に移す。出来事 `purge` を1つ出す（全員に見える）。順位の確定はここではせず、あとの `finishCheck` に任せる。
+- 「いちばん強いカード」は `strongestCards(rng, hand, n, reversed)`（`hand.ts` に足す。闇市と共用）で決める：その時点の向き（`isReversed`）で強い順。ジョーカーが最強。`n` 枚の境目に同じ強さのカードが並ぶときだけ、その中から乱数で選ぶ（決まるときは乱数を引かない）。
+
+**銀河鉄道（`triple9_salvage`）**
+
+- `choiceKind: 'salvage'`。`afterPlay`：本物の9がちょうど3枚 → `{ type: 'handChoice', rule, max: 2 }`。
+- 待ちを作るとき：`max = min(2, 手札の枚数, 捨て札の枚数)`。0 なら選択をはさまない（出来事も出さない）。
+- 選んだとき（`doChoose`）：`n` 枚（1〜`max`）を選んだら、**その時点の捨て札**から `sample` で `n` 枚を引き、選んだカードを捨て札に置き、引いたカードを手札に入れて並べ直す。出来事 `salvage`（全員に見える）。0枚なら `choiceSkip`。
+- 場に出ているカードは捨て札ではないので、対象にならない。
+
+**闇市（`triple_a_trade`）**
+
+- `choiceKind: 'trade'`。`afterPlay`：本物の A がちょうど3枚 → `{ type: 'handChoice', rule, max: 2 }`。
+- 待ちを作るとき：手札が0枚なら選択をはさまない。`max = min(2, 手札の枚数)`。`MyAwaiting.targets` は、自分以外の残っている席（パス済みを含む）。
+- 操作：`cards` が空なら使わない（`choiceSkip`）。空でなければ `target` が必要で、枚数は**ちょうど** `min(2, 自分の手札, 相手の手札)`（decisions §19.3）。
+- 処理：相手の手札から `strongestCards` で同じ枚数を取り、自分のカードと入れ替える（相手の「いちばん強いカード」は、受け取る前の手札で決める）。両方の手札を並べ直す。出来事 `trade`。
+- 見える範囲：全員に誰から誰へ・何枚。`given`・`taken` は当事者の2人だけ（`eventsFor` で落とす）。
+
+**Q ボンバー（`call_discard_on_q`）**
+
+- `choiceKind: 'call'`。`afterPlay`：手番で出した Q の組（`play.rank === 12`。ジョーカーを混ぜてもよい）→ `{ type: 'handChoice', rule, max: 出した枚数 }`。
+- 手札が0枚でも選択をはさむ（§15.1）。
+- 操作：`cards` は空。`ranks` は0〜`max` 個の、重複のない `CallRank`。空（または省略）なら宣言しない（`choiceSkip`）。
+- 処理：出した人、そのあと進行方向の順に、残っている全員の手札から、宣言された数字の本物のカードをすべて捨て札に移す。ジョーカーは `'joker'` を宣言したときだけ捨てる。出来事 `callDiscard`（全員に見える。`discards` は1枚以上捨てた席だけ）。順位の確定は、あとの `finishCheck` に任せる。
+
+**大革命（`quad2_instant_win`）**
+
+- `afterPlay`：本物の2がちょうど4枚 → 「革命」が OFF のときだけ `toggleRevolution`（ON のときは「革命」のモジュールが出すので、重ねない）、`{ type: 'instantWin', rule }`、`{ type: 'flush', leader: 出した人, reason: 'quad2_instant_win' }`。
+- `runEffects` の `instantWin`：出した人の残りの手札を捨て札に移し、出来事 `instantWin`、`placeSeat(出した人, 'finish')`。ゲームが終わったら止める。
+- そのあとの `flush` で場が流れ、`flushField` が進行方向で次の残っている人を親にする。
+- `mayFlush`：本物の2の4枚組は true（特権のスキップを付けられない）。
+
+**禁止上がり（`forbidden_finish` の変更）**
+
+- ON の役のルールに当たる手（オーメン・DEATH・銀河鉄道・闇市・大革命）は、反則上がりにしない（§15.1、§15.9）。判定のいちばん上に置く。
+
+### 2.5 操作の検査（`match.ts` の `choose`）
+
+`choiceKind` ごとに確かめる。合わなければ `invalidChoice`（手札にないカードは今までどおり `cardNotInHand`）。
+
+| 種類 | `cards` | `target` | `ranks` |
+|---|---|---|---|
+| give・discard・salvage | 0〜`max` 枚、重複なし、手札にある | あれば拒否 | あれば拒否 |
+| trade | 空（使わない）か、ちょうど `min(2, 自分, 相手)` 枚 | 空でないとき必須。自分以外の残っている席 | あれば拒否 |
+| call | 空であること | あれば拒否 | 0〜`max` 個、重複なし、3〜15 か `'joker'` |
+
+`target`・`ranks` の形（席の番号、配列で穴がない）も engine で確かめる。
+
+### 2.6 自動の操作（`auto.ts`）
+
+時間切れは、どれも「何もしない」（`cards: []`、`ranks` なし）。CPU は次のとおり（§15.6〜§15.8）。
+
+- 銀河鉄道：`cpuChoice(手札, max, 向き)`（いちばん弱い2枚）。
+- 闇市：相手を `targets` から乱数で1人選び、`cpuChoice(手札, min(2, 自分, 相手), 向き)`。
+- Q ボンバー：自分の手札でいちばん枚数の多い数字を1つ宣言する。同じ枚数なら、その時点の向きで弱い数字。ジョーカーは数えない。数字のカードがなければ宣言しない。
+
+### 2.7 見える情報
+
+- `viewFor`：`colorLock`。`choice` の待ちの `targets`（闇市だけ）。
+- `eventsFor`：`trade` の中身を当事者以外から落とす。ほかの新しい出来事は全員に同じ。
+- `purge`・`salvage`・`callDiscard`・`instantWin` で動いたカードは捨て札に入るので、全員に見えてよい。闇市で動いたカードは、どちらの手札にも残るので当事者だけ。
+
+### 2.8 設定の検証
+
+- 24種を受け付ける。6戻しは J バックがないと `missingRequirement`（既存の仕組み）。
+
+### 2.9 テスト
+
+- ルールごとのテスト（発動する・しない条件、ジョーカー入りは役にならない、4枚組は役にならない、返しの一周では発動しない）。
+- 固定の場面：
+  - 5色縛り：赤の5 → 黒は出せない／ジョーカーは出せる／赤黒の5の2枚では成立しない／砂嵐・スペ3返し・4止めは通る／場が流れると解除／マーク縛りと両方かかる。
+  - 6戻し：J バック中の6で解除され、次の人は解除後の向きで出す／同じ場でもう一度 J。
+  - オーメン：革命 OFF でも起きる／J バック中の6の3枚は「革命 → 6戻し」の順。
+  - DEATH：ジョーカーが最強／革命中は3が最強／同じ強さは乱数／捨てて0枚になった人が上がる（進行方向の順）／出した人が最後の3枚で出したときは出した人が先。
+  - 銀河鉄道：捨て札が1枚なら1枚まで／捨て札が0枚なら選択なし／最後の3枚で出したら選択なし／自分が置いたカードは引かない／9リバースが先。
+  - 闇市：枚数は少ないほう／相手のいちばん強い2枚／当事者以外に中身が見えない（`viewFor`・`eventsFor`）／使わない。
+  - Q ボンバー：出した枚数まで／ジョーカーの宣言／数字の宣言ではジョーカーは残る／出した本人も捨てる／手札0枚でも宣言できる／複数人が同時に上がる順／前の大富豪が同時に0枚でも都落ちする場面／場のカードは対象外。
+  - 大革命：手札が残っていても上がる／革命が ON でも OFF でも切り替えは1回／禁止上がりにならない／都落ち／連覇のときの枠の数／場が流れて次の人が親／スキップは付けられない／ジョーカー入りの4枚はふつうの革命。
+- 見える範囲のテスト（闇市の中身）。
+- 自動で最後まで進むテスト（24種すべて ON、特権あり・なし、でたらめな操作を混ぜる）。
+- **同じ動きの検査**：`compat.test.ts` の `s2-all16` は `STAGE1_RULE_IDS` を使うように直す（記録は作り直さない。作り直さずに通ることが、16種の試合の動きが変わっていない証拠になる）。24種の記録は足さない（次に engine を変えるときに足す）。
+- 既存のテストで `ALL_RULE_IDS` を「16種すべて」の意味で使っているものは、意味に合わせて `STAGE1_RULE_IDS` か `ALL_RULE_IDS` に直す。
+
+## 3. server
+
+- `protocol.ts`：`choose` に `target?: number`、`ranks?: (number | 'joker')[]` を足す。
+- `validate.ts`：`choose` の形の検査を分ける。`target` は 0〜3 の整数。`ranks` は長さ14以下の配列で、各要素は 3〜15 の整数か `'joker'`。中身（選べる相手か、枚数が合うか）は engine が確かめる。
+- `state.ts`：`STATE_FORMAT = 5`（engine の `MatchState` が version 4 になり、`GameState` に `colorLock` が増えるため）。前の形式のルームは、今までどおり失効の扱い。
+- モード：カスタムは24種、超富豪は24種すべてで固定（`modeRuleIds`・`normalizeRules` は `CUSTOM_MODE_RULE_IDS`・`ALL_RULE_IDS` を見ているので、engine の変更で切り替わる）。コメントの「16種」を直す。
+- 期限：新しい選択も `choice` の待ち（15秒）なので、期限の仕組みは変えない。
+- テスト：24種のカスタムと超富豪の試合が最後まで進む／`choose` の `target`・`ranks` の形の検査（正しい・壊れた入力）／6戻しが J バックなしで外れる／性質テストの設定に24種を足す／前の形式（4）のルームが失効になる。
+
+## 4. client
+
+`design-client.md` の決まり（§1、§7）をすべて守る。**いまの画面の配置は動かさない**。新しい選択は、すでにある部品（10捨ての選び方、強奪の枠、独裁の枠）と同じ形で作る。
+
+### 4.1 ロビー
+
+- カスタム：見出し「定番」「応用」の下に、見出し「特殊」と8種を同じ2列で足す。並び：5色縛り・6戻し／オーメン・DEATH／銀河鉄道・闇市／Q ボンバー・大革命。
+- 6戻しは、J バックが OFF の間は押せない形で出す（4止めと同じ仕組み）。
+- 「全部 ON」は24種すべて。超富豪は24種の一覧（固定）。
+- 表示名と説明（`rules-text.ts`。自分たちの言葉で書く）：
+
+| ID | 表示名 | 説明 |
+|---|---|---|
+| `color_lock_on_5` | 5色縛り | 5を出すと、場が流れるまで、出した5と同じ色（赤か黒）のカードしか出せない。 |
+| `cancel_reverse_on_6` | 6戻し | J バック中に6を出すと、J バックが解除される。 |
+| `triple6_revolution` | オーメン | 6を3枚（ジョーカーなし）出すと、革命が起きる。 |
+| `triple4_purge` | DEATH | 4を3枚（ジョーカーなし）出すと、ほかの全員がいちばん強いカードを1枚捨てる。 |
+| `triple9_salvage` | 銀河鉄道 | 9を3枚（ジョーカーなし）出すと、手札を2枚まで捨て札に置き、同じ枚数を捨て札からランダムに受け取れる。 |
+| `triple_a_trade` | 闇市 | A を3枚（ジョーカーなし）出すと、相手を1人選び、自分の2枚と相手のいちばん強い2枚を交換できる。 |
+| `call_discard_on_q` | Q ボンバー | Q を出したら、出した枚数まで数字を宣言できる。全員がその数字のカードをすべて捨てる。 |
+| `quad2_instant_win` | 大革命 | 2を4枚（ジョーカーなし）出すと、その場で上がる。同時に革命も起きる。 |
+
+### 4.2 対戦：新しい選択
+
+どれも、ほかの人には「◯◯ が選んでいます」と出し、残り時間のバーは選ぶ人の枠に出す（7渡し・10捨てと同じ）。
+
+- **銀河鉄道**：10捨てと同じ選び方。メッセージ「捨て札と交換するカードを2枚まで選べます」。ボタンは「交換しない」と「◯枚を交換」。
+- **闇市**：場の枠の位置に、強奪の枠と同じ形の枠を出す。見出し「闇市：相手を選ぶ」、残っている相手のボタン（名前と残り枚数）。相手を選ぶと、メッセージが「渡すカードを◯枚選んでください」になり、手札から◯枚（`min(2, 自分, 相手)`）を選ぶ。ボタンは「使わない」と「◯枚を交換」（相手を選び、ちょうど◯枚を選んだときだけ押せる）。相手を変えて枚数が減ったら、あとから選んだカードを残す。
+- **Q ボンバー**：場の枠の位置に、独裁の枠と同じ形の枠を出す。見出し「Q ボンバー：数字を◯個まで宣言」、3〜2 の13個と JOKER のボタン。押すと選び、もう一度押すと外す。上限を超えて押すと、いちばん前に選んだものと入れ替える。ボタンは「宣言しない」と「宣言する」（1個以上選んだときだけ押せる）。
+- 受け取ったカード（銀河鉄道で引いたカード、闇市で受け取ったカード。闇市は相手の側も）は、7渡しと同じ仕組みで、次の自分の操作まで手札の中で目立たせる。
+
+### 4.3 対戦：状態の札
+
+- 色縛り中、場の札の並びに「色縛り 赤」「色縛り 黒」を足す（「赤」は赤い文字）。発動しているときだけ出す。
+- 出せないカードが暗くなるのは、今までの仕組みのまま（engine の出せる手の一覧で決まる）。暗いカードを押したときの理由に「色縛りの色に合わない」を足す。
+
+### 4.4 メッセージ
+
+| 出来事 | メッセージ |
+|---|---|
+| 色縛りの成立 | 「5色縛り！ 赤だけ」「5色縛り！ 黒だけ」 |
+| 6戻し | 「6戻し！ J バック解除」 |
+| オーメン | 「オーメン！」のあと、革命のメッセージ（今までどおり） |
+| DEATH | 「DEATH！ ◯人が1枚ずつ捨てた」 |
+| 銀河鉄道 | 「銀河鉄道！ ◯◯ が 2枚 交換した」 |
+| 闇市 | 「闇市！ ◯◯ と △△ が 2枚 交換した」（当事者には「△△ と 2枚 交換した」） |
+| Q ボンバー | 「Q ボンバー！ 7・K」（宣言した数字を並べる。ジョーカーは「JOKER」） |
+| 大革命 | 「大革命！ ◯◯ が上がった」 |
+| 選ばなかった（銀河鉄道・闇市・Q ボンバー） | メッセージなし |
+
+- 「出たカードの履歴」に、DEATH・銀河鉄道（置いたカード）・Q ボンバー・大革命で捨て札に入ったカードを、誰のカードかとルール名を添えて足す。闇市は当事者にだけ、渡したカードと受け取ったカードを出す。
+- 演出は、オーメンと大革命で今ある革命の演出を使う（新しい演出は足さない）。
+- メニューの「この試合のルール」は、ON のルールを並べる（数が増えるだけ）。
+
+### 4.5 開発用の道具
+
+- `scripts/bots.mjs`：新しい選択に対応する（銀河鉄道は 0〜`max` 枚、闇市は相手とちょうどの枚数か使わない、Q ボンバーは 0〜`max` 個の数字）。`--rules all` は24種。
+- `/dev/gallery`：3つの選択、色縛りの札（札が6つ並ぶ場面を含む）、24種のロビー、新しいメッセージを足す。
+
+### 4.6 テストと確認
+
+- 関数のテスト：選び方（闇市の枚数の決まり、Q ボンバーの上限と入れ替え）、新しい出来事のメッセージと履歴、受け取ったカードの強調、新しい「出せない理由」。
+- 型チェックとビルド。
+- 動かして確かめるもの：カスタムと超富豪で24種すべて ON にして、ボット4席の試合が最後まで進むこと。Chrome の1席で、銀河鉄道・闇市・Q ボンバーの選択を1回ずつ操作すること。ロビーの3つの見出しと6戻しの連動。
+- 画像：24種のロビー（360・390・430px）、3つの選択（360・390・430px、高さ 640px も）、札が6つ並ぶ場。
+
+## 5. 作る順番
+
+1. engine（型、効果の順、8つのモジュール、検査、自動の操作、テスト）
+2. server（形式の番号、`choose` の形、テスト）と client（ロビー、選択、札、メッセージ、道具）
+3. それぞれの段階で実装レビュー（Fable と Codex）→ 修正 → 動作確認
