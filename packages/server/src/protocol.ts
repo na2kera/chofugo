@@ -67,8 +67,11 @@ export type ClientAction =
   | { type: 'pass'; awaitId: number }
   | { type: 'respond'; awaitId: number; cards: string[] | null }
   | { type: 'exchangeGive'; awaitId: number; cards: string[] }
-  /** 7渡し・10捨てで選ぶ（その2）。空の配列 = 渡さない・捨てない。 */
-  | { type: 'choose'; awaitId: number; cards: string[] }
+  /**
+   * 手を出したあとの選択（7渡し・10捨て・銀河鉄道・闇市・Q ボンバー）。cards が空 = 渡さない・捨てない・使わない。
+   * target は闇市の相手（席の番号）、ranks は Q ボンバーで宣言する数字（3〜15 か 'joker'）。第2段階、design-4 §3。
+   */
+  | { type: 'choose'; awaitId: number; cards: string[]; target?: number; ranks?: (number | 'joker')[] }
   /**
    * 特権の選択（その3、design-3 §3.2、§6.2）。abilities は6個以下の文字列。confirm: false は途中の保存（待ちは同じ番号のまま残り、期限も変わらない）。
    * 成功したら、内容が変わらなくても送った人に state を返す。
