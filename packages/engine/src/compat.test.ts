@@ -4,6 +4,7 @@
 //
 // 定番8種の記録はその2の変更を入れる前の engine（コミット「engine: その1と同じ動きの検査の記録を追加」）で作った。
 // s2- で始まる記録（16種すべて ON などの特権なしの試合）は、その3の変更を入れる前の engine（144e637）で作った（design-3 §2.8）。
+// s3- で始まる記録（16種すべて ON・特権ありの試合）は、第2段階の変更を入れる前の engine（40fa6ee の時点）で作った（design-4 §6.4）。
 // ふだんは比較だけを行う。記録と違えば失敗し、記録のファイルがなくても失敗する（黙って作り直さない。design-2 §6.6）。
 //
 // 記録を作る・作り直す手順（定番8種の挙動を意図して変えたときだけ。ふつうは作り直さない）:
@@ -21,14 +22,38 @@ import {
   type GameEvent,
   type MatchState,
   type RuleId,
-  ALL_RULE_IDS,
 } from './index.ts';
 import { nextInt, rngFromSeed, type RngState } from './rng.ts';
 
 type Seed4 = [number, number, number, number];
 
+/**
+ * 第1段階の16種（記録を作ったときの並び）。ALL_RULE_IDS は第2段階で24種に増えるので、記録の試合には使わない。
+ * TODO(第2段階): types.ts の STAGE1_RULE_IDS に置き換える。
+ */
+const STAGE1_16: RuleId[] = [
+  'flush_on_8',
+  'block_flush_with_4',
+  'revolution',
+  'temp_reverse_on_j',
+  'spade3_beats_joker',
+  'suit_lock',
+  'sequence_lock',
+  'runs',
+  'forbidden_finish',
+  'dethrone',
+  'diamond3_start',
+  'triple3_trump',
+  'give_on_7',
+  'reverse_order_on_9',
+  'discard_on_10',
+  'skip_on_k',
+];
+
 /** 記録する試合の一覧。ここを変えると記録も作り直しになる。 */
-const COMBOS: { name: string; rules: RuleId[] }[] = [
+type Combo = { name: string; rules: RuleId[]; abilities?: boolean };
+
+const COMBOS: Combo[] = [
   { name: 'none', rules: [] },
   { name: 'recommended', rules: ['flush_on_8', 'revolution', 'spade3_beats_joker', 'runs', 'dethrone'] },
   {
@@ -43,8 +68,8 @@ const COMBOS: { name: string; rules: RuleId[] }[] = [
  * その2の記録（その3の変更を入れる前の engine で作った。特権なし）。16種すべて ON と、応用のルールを含む組み合わせ。
  * 記録の作り方・比べ方は、上の定番8種の記録と同じ。名前は 's2-' で始める。
  */
-const COMBOS_S2: { name: string; rules: RuleId[] }[] = [
-  { name: 's2-all16', rules: ALL_RULE_IDS.slice() },
+const COMBOS_S2: Combo[] = [
+  { name: 's2-all16', rules: STAGE1_16.slice() },
   { name: 's2-flushlock', rules: ['flush_on_8', 'block_flush_with_4', 'sequence_lock', 'suit_lock', 'runs', 'spade3_beats_joker'] },
   {
     name: 's2-numbers',
@@ -52,7 +77,12 @@ const COMBOS_S2: { name: string; rules: RuleId[] }[] = [
   },
   { name: 's2-order', rules: ['reverse_order_on_9', 'skip_on_k', 'spade3_beats_joker', 'temp_reverse_on_j', 'flush_on_8', 'runs'] },
 ];
-const ALL_COMBOS = [...COMBOS, ...COMBOS_S2];
+/**
+ * その3の記録（第2段階の変更を入れる前の engine で作った）。16種すべて ON・特権あり（超富豪モードと同じ）。
+ * 名前は 's3-' で始める。mixed の選び方は前の記録と同じで、特権の選択と手番での特権の使用は auto に任せる（design-4 §6.4）。
+ */
+const COMBOS_S3: Combo[] = [{ name: 's3-all16-abilities', rules: STAGE1_16.slice(), abilities: true }];
+const ALL_COMBOS = [...COMBOS, ...COMBOS_S2, ...COMBOS_S3];
 const SEEDS: Seed4[] = [
   [1, 2, 3, 4],
   [20261117, 7, 0xabcdef, 99],
@@ -100,8 +130,9 @@ function mixedAction(s: MatchState, rng: RngState): Action {
   return { type: 'auto', awaitId: w.id, policy: 'cpu' };
 }
 
-function record(rules: RuleId[], seed: Seed4, mode: Mode): string {
-  const created = createMatch({ matchId: 'compat', rules, gameCount: 5 }, seed);
+function record(rules: RuleId[], seed: Seed4, mode: Mode, abilities = false): string {
+  // 特権なしの記録は、前と同じく abilities を付けずに作る
+  const created = createMatch(abilities ? { matchId: 'compat', rules, gameCount: 5, abilities } : { matchId: 'compat', rules, gameCount: 5 }, seed);
   if (!created.ok) throw new Error(created.error.message);
   let s = created.state;
   const events: GameEvent[] = created.events.slice();
@@ -134,7 +165,7 @@ const RECORD_MODE = process.env['CHOFUGO_COMPAT_RECORD'] === '1';
 /** 記録のファイル（ふだんの比較に使う。読むだけ）。キーは './compat/名前.jsonl'。 */
 const RECORDS = import.meta.glob('./compat/*.jsonl', { query: '?raw', import: 'default', eager: true });
 
-describe('変更前と同じ動きの検査（定番8種の試合と、その2のルールを含む特権なしの試合）', () => {
+describe('変更前と同じ動きの検査（定番8種の試合、その2のルールを含む特権なしの試合、16種・特権ありの試合）', () => {
   it('記録のファイルの数が、試合の一覧と同じ', () => {
     if (RECORD_MODE) return;
     const expected = ALL_COMBOS.length * SEEDS.reduce((n, _, si) => n + (si < 2 ? 2 : 1), 0);
@@ -147,7 +178,7 @@ describe('変更前と同じ動きの検査（定番8種の試合と、その2�
       for (const mode of modes) {
         const path = `./compat/${combo.name}-s${si}-${mode}.jsonl`;
         it(`${combo.name} / 種${si} / ${mode}`, async () => {
-          const actual = record(combo.rules, seed, mode);
+          const actual = record(combo.rules, seed, mode, combo.abilities === true);
           if (RECORD_MODE) {
             await expect(actual).toMatchFileSnapshot(path);
             return;
