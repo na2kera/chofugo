@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import type { LegalPlay, MyAwaiting, Play, SeatId, VisibleEvent } from '@chofugo/engine';
 import {
+  abilityBarFrame,
   abilityButtons,
   abilityPlate,
   banButtons,
@@ -12,6 +13,7 @@ import {
   playWithSkip,
   selectingLine,
   selectPrompt,
+  SKIP_ON_LABEL,
   toggleDraft,
   toggleStealCard,
 } from './abilities.ts';
@@ -97,6 +99,15 @@ describe('特権のボタンと選択の枠（design-3 §4.3、§6.1、§6.3）'
     expect(playWithSkip(lp(['spade-5'], 5, { canSkip: true }), true)).toEqual({ ok: true, withSkip: true });
     expect(playWithSkip(lp(['spade-8'], 8), true)).toEqual({ ok: false, line: CANNOT_SKIP_TEXT });
     expect(CANNOT_SKIP_TEXT).toBe('この手には スキップを付けられません');
+  });
+
+  it('ボタンの枠と表記：スキップの ON だけ金の塗り（btn）で「スキップON」。開いている特権は hot hi、ふだんは btn2', () => {
+    expect(abilityBarFrame('skip', true)).toBe('btn');
+    expect(abilityBarFrame('skip', false)).toBe('btn2');
+    expect(abilityBarFrame('peek', true)).toBe('hot hi');
+    expect(abilityBarFrame('peek', false)).toBe('btn2');
+    expect(SKIP_ON_LABEL).toBe('スキップON');
+    expect(ABILITY_TEXT.skip.name).toBe('スキップ');
   });
 
   it('特権を使って待ちの番号が変わると、選択・確認・選択の枠・強奪のカード・スキップの ON はすべて捨てられる', () => {

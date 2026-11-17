@@ -4,7 +4,7 @@
 
 import { ALL_ABILITY_IDS, type AbilityId, type CardId, type MyAwaiting, type Rank, type SeatId } from '@chofugo/engine';
 import { ABILITY_TEXT } from '../abilities-text.ts';
-import { banButtons, draftRowState, PANEL_PROMPT, type AbilityButton, type AbilityPanel } from '../lib/abilities.ts';
+import { abilityBarFrame, banButtons, draftRowState, PANEL_PROMPT, SKIP_ON_LABEL, type AbilityButton, type AbilityPanel } from '../lib/abilities.ts';
 import { rankKey } from '../lib/cards.ts';
 import s from './Abilities.module.css';
 
@@ -58,16 +58,17 @@ export function AbilityBar({
     <div className={s.bar} style={{ gridTemplateColumns: `repeat(${buttons.length}, minmax(0, 1fr))` }} role="group" aria-label="特権">
       {buttons.map((b) => {
         const on = b.id === 'skip' ? skipOn : open === b.id;
+        const frame = abilityBarFrame(b.id, on);
         return (
           <button
             key={b.id}
             type="button"
-            className={`f ${on ? 'hot hi' : 'btn2'} ${s.barBtn}`}
+            className={`f ${frame} ${s.barBtn}${frame === 'btn' ? ` ${s.skipOn}` : ''}`}
             aria-pressed={on}
             disabled={disabled || !b.usable}
             onClick={() => onPress(b.id)}
           >
-            {ABILITY_TEXT[b.id].name}
+            {b.id === 'skip' && on ? SKIP_ON_LABEL : ABILITY_TEXT[b.id].name}
           </button>
         );
       })}

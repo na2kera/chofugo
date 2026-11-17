@@ -38,7 +38,8 @@
 }
 .tag {
   position: absolute;
-  top: -14px;
+  /* 幅 360px で中央の階級の札と重ならないよう、枠の上に持ち上げる（札の高さ 28px、ヘッダーの文字とは 4px 空く） */
+  top: -24px;
   right: 0;
   padding: 0 2px;
   font-size: 16px;

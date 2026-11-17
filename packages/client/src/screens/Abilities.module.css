@@ -43,7 +43,8 @@
   margin: 8px 14px 0;
   flex: none;
 }
-.barBtn {
+/* グローバルの .btn / .btn2（min-height 52px・padding 0 8px）に読み込み順によらず勝つよう、.bar の中で指定する */
+.bar .barBtn {
   min-height: 44px;
   height: 44px;
   width: 100%;
@@ -52,6 +53,10 @@
   padding: 0 4px;
   white-space: nowrap;
   overflow: hidden;
+}
+/* スキップの ON（金の塗りの .btn）：.btn の letter-spacing 2px を外す（「スキップON」80px を内側 約85px に収める） */
+.bar .skipOn {
+  letter-spacing: 0;
 }
 
 /* 選択の枠：場の枠の位置 */

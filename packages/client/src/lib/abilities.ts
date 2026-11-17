@@ -49,6 +49,18 @@ export function abilityButtons(mine: MyAwaiting | null): AbilityButton[] {
   return out;
 }
 
+/** スキップが ON のときの表記（OFF は ABILITY_TEXT の「スキップ」）。幅 360px・ボタン3つでも切れない5文字。 */
+export const SKIP_ON_LABEL = 'スキップON';
+
+/**
+ * 特権のボタンの枠。スキップの ON は金の塗り（「N枚を出す」と同じ `btn`）、開いている特権は明るい枠（`hot hi`）、
+ * ふだんは金の線の枠（`btn2`）。
+ */
+export function abilityBarFrame(id: AbilityId, on: boolean): 'btn' | 'hot hi' | 'btn2' {
+  if (!on) return 'btn2';
+  return id === 'skip' ? 'btn' : 'hot hi';
+}
+
 /** 開いている選択の枠の種類（スキップは枠を開かず、押すたびに ON/OFF）。 */
 export type AbilityPanel = Exclude<AbilityId, 'skip'>;
 
