@@ -27,6 +27,15 @@ export const RULES_TEXT: Record<RuleId, RuleText> = {
   reverse_order_on_9: { name: '9リバース', text: '9を出すと、場が流れるまで順番の回る向きが逆になる。' },
   discard_on_10: { name: '10捨て', text: '10を出したら、出した枚数まで手札を捨てられる。捨てなくてもよい。' },
   skip_on_k: { name: 'K スキップ', text: 'K を出すと、出した枚数の人数だけ順番を飛ばす。' },
+  // 第2段階（特殊の8種、design-4 §4.1）
+  color_lock_on_5: { name: '5色縛り', text: '5を出すと、場が流れるまで、出した5と同じ色（赤か黒）のカードしか出せない。' },
+  cancel_reverse_on_6: { name: '6戻し', text: 'J バック中に6を出すと、J バックが解除される。' },
+  triple6_revolution: { name: 'オーメン', text: '6を3枚（ジョーカーなし）出すと、革命が起きる。' },
+  triple4_purge: { name: 'DEATH', text: '4を3枚（ジョーカーなし）出すと、ほかの全員がいちばん強いカードを1枚捨てる。' },
+  triple9_salvage: { name: '銀河鉄道', text: '9を3枚（ジョーカーなし）出すと、手札を2枚まで捨て札に置き、同じ枚数を捨て札からランダムに受け取れる。' },
+  triple_a_trade: { name: '闇市', text: 'A を3枚（ジョーカーなし）出すと、相手を1人選び、自分の2枚と相手のいちばん強い2枚を交換できる。' },
+  call_discard_on_q: { name: 'Q ボンバー', text: 'Q を出したら、出した枚数まで数字を宣言できる。全員がその数字のカードをすべて捨てる。' },
+  quad2_instant_win: { name: '大革命', text: '2を4枚（ジョーカーなし）出すと、その場で上がる。同時に革命も起きる。' },
 };
 
 /** ロビーに並べる順（見本の並び。左右2列）。大富豪モードの8種、カスタムモードでは「定番」の見出しの下。 */
@@ -51,6 +60,18 @@ export const ADVANCED_RULE_ORDER: RuleId[] = [
   'discard_on_10',
   'reverse_order_on_9',
   'skip_on_k',
+];
+
+/** カスタムモードの「特殊」の見出しの下に並べる順（design-4 §4.1。左右2列）。 */
+export const SPECIAL_RULE_ORDER: RuleId[] = [
+  'color_lock_on_5',
+  'cancel_reverse_on_6',
+  'triple6_revolution',
+  'triple4_purge',
+  'triple9_salvage',
+  'triple_a_trade',
+  'call_discard_on_q',
+  'quad2_instant_win',
 ];
 
 export function ruleName(id: RuleId): string {

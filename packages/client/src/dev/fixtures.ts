@@ -47,6 +47,7 @@ export function gameView(over: Partial<GameView> = {}): GameView {
     suitLock: null,
     seqLock: null,
     openingCard: null,
+    colorLock: null,
     choice: null,
     returnRound: null,
     exchange: null,

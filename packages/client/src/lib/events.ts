@@ -2,14 +2,18 @@
 // 通し番号で重複を除き、メッセージと演出に回す。出たカードの履歴もここでためる。
 // 出来事の種類ごとのメッセージと演出は、下の2つの関数（表）で決める。種類は engine の VisibleEvent が正。
 
-import type { CardId, Play, SeatId, VisibleEvent } from '@chofugo/engine';
+import type { CardId, Play, RuleId, SeatId, VisibleEvent } from '@chofugo/engine';
 import { cardShort, playSummary, rankKey } from './cards.ts';
+import { callLabel } from './choice.ts';
 
 /**
  * 出たカードの履歴の1行。turn = 手番で出した手、respond = 返しの一周で返した手（4止めの4を含む）、
  * discard = 10捨てで捨てたカード（「10捨て」と添える、design-2 §4.5）。
+ * effect = 第2段階のルールの効果で動いたカード（design-4 §4.4）。rule のルール名を添える。seat は「誰のカードだったか」。
+ *   DEATH・銀河鉄道（置いたカード）・Q ボンバー・大革命で捨て札に入ったカードと、闇市で動いたカード（当事者にだけ届く）。
+ * 1つの出来事から複数の行ができる（DEATH・Q ボンバー・闇市）が、その行どうしは席が違うので、seq と seat で1行が決まる。
  */
-export type HistoryItem = { seq: number; seat: SeatId; cards: CardId[]; via: 'turn' | 'respond' | 'discard' };
+export type HistoryItem = { seq: number; seat: SeatId; cards: CardId[]; via: 'turn' | 'respond' | 'discard' | 'effect'; rule?: RuleId };
 
 export type Feed = {
   matchId: string | null;
@@ -92,6 +96,18 @@ function applyToHistory(feed: Feed, e: VisibleEvent): void {
     if (e.toDiscard !== true) feed.top = { seat: e.seat, play: e.play };
   } else if (e.type === 'discard') {
     feed.history.push({ seq: e.seq, seat: e.seat, cards: e.cards, via: 'discard' });
+  } else if (e.type === 'purge') {
+    for (const d of e.discards) feed.history.push({ seq: e.seq, seat: d.seat, cards: [d.card], via: 'effect', rule: 'triple4_purge' });
+  } else if (e.type === 'salvage') {
+    if (e.put.length > 0) feed.history.push({ seq: e.seq, seat: e.seat, cards: e.put, via: 'effect', rule: 'triple9_salvage' });
+  } else if (e.type === 'callDiscard') {
+    for (const d of e.discards) if (d.cards.length > 0) feed.history.push({ seq: e.seq, seat: d.seat, cards: d.cards, via: 'effect', rule: 'call_discard_on_q' });
+  } else if (e.type === 'instantWin') {
+    if (e.discarded.length > 0) feed.history.push({ seq: e.seq, seat: e.seat, cards: e.discarded, via: 'effect', rule: 'quad2_instant_win' });
+  } else if (e.type === 'trade') {
+    // 中身は当事者にだけ届く（ほかの席には null）。渡した側のカード・受け取った側のカードを、それぞれ元の持ち主の行に
+    if (e.given !== null && e.given.length > 0) feed.history.push({ seq: e.seq, seat: e.from, cards: e.given, via: 'effect', rule: 'triple_a_trade' });
+    if (e.taken !== null && e.taken.length > 0) feed.history.push({ seq: e.seq, seat: e.to, cards: e.taken, via: 'effect', rule: 'triple_a_trade' });
   } else if (e.type === 'fieldCleared' || e.type === 'gameStart') {
     feed.top = null;
   }
@@ -124,12 +140,20 @@ export function ingest(prev: Feed, msg: Incoming): IngestResult {
   return { feed, fresh };
 }
 
-/** 出来事の列から演出の列を作る（場が流れる演出には、その直前の場のいちばん上を使う）。 */
+/**
+ * 出来事の列から演出の列を作る（場が流れる演出には、その直前の場のいちばん上を使う）。
+ * 大革命（instantWin）では、その人の順位の確定と、続く場の流れの演出を省く。1回の state に
+ * 「出す・革命・順位・場が流れる」の4つが入り、待ち行列の決まり（3つ以上で省く）で革命の演出が消えるため（client-assumptions J8）。
+ */
 export function animsFor(before: Feed['top'], fresh: readonly VisibleEvent[]): Anim[] {
   let top = before;
   const out: Anim[] = [];
+  const instantWin = new Set<SeatId>();
   for (const e of fresh) {
     switch (e.type) {
+      case 'instantWin':
+        instantWin.add(e.seat);
+        break;
       case 'play':
         out.push({ kind: 'play', seq: e.seq, seat: e.seat, play: e.play });
         top = { seat: e.seat, play: e.play };
@@ -141,13 +165,14 @@ export function animsFor(before: Feed['top'], fresh: readonly VisibleEvent[]): A
         top = { seat: e.seat, play: e.play };
         break;
       case 'fieldCleared':
-        if (top !== null) out.push({ kind: 'sweep', seq: e.seq, seat: top.seat, play: top.play });
+        if (top !== null && e.reason !== 'quad2_instant_win') out.push({ kind: 'sweep', seq: e.seq, seat: top.seat, play: top.play });
         top = null;
         break;
       case 'revolution':
         out.push({ kind: 'revolution', seq: e.seq });
         break;
       case 'placed':
+        if (instantWin.has(e.seat) && e.reason === 'finish') break;
         out.push({ kind: 'placed', seq: e.seq, seat: e.seat, red: e.reason === 'foul' || e.reason === 'dethrone' });
         break;
       case 'gameStart':
@@ -184,12 +209,15 @@ export function eventMessage(e: VisibleEvent, nameOf: NameOf, me: SeatId | null 
       if (e.reason === 'forceFlush') return null;
       if (e.reason === 'flush_on_8') return '8切り！';
       if (e.reason === 'triple3_trump') return '砂嵐！';
+      // 大革命で場が流れたときは、直前の「大革命！ ◯◯ が上がった」を残す（client-assumptions J7）
+      if (e.reason === 'quad2_instant_win') return null;
       return '場が流れた';
     case 'revolution':
       return e.active ? '革命！' : '革命が戻った';
     case 'tempReverse':
-      // 解除は場が流れるときに起き、「場が流れた」と重なるので出さない
-      return e.active ? 'J バック！' : null;
+      // 解除は場が流れるときに起き、「場が流れた」と重なるので出さない。6戻しの解除（rule 付き）だけ出す（design-4 §4.4）
+      if (e.active) return 'J バック！';
+      return e.rule === 'cancel_reverse_on_6' ? '6戻し！ J バック解除' : null;
     case 'suitLock':
       return '縛り！';
     case 'respond':
@@ -236,6 +264,22 @@ export function eventMessage(e: VisibleEvent, nameOf: NameOf, me: SeatId | null 
       return `${nameOf(e.seat)} が 特権を ${e.count}個 選んだ`;
     case 'ability':
       return abilityMessage(e, nameOf, me);
+    // 第2段階の出来事（design-4 §4.4）。オーメンの「オーメン！」は eventLines で革命の行の前に足す
+    case 'colorLock':
+      return `5色縛り！ ${e.color === 'red' ? '赤' : '黒'}だけ`;
+    case 'purge':
+      return `DEATH！ ${e.discards.length}人が1枚ずつ捨てた`;
+    case 'salvage':
+      return `銀河鉄道！ ${nameOf(e.seat)} が ${e.put.length}枚 交換した`;
+    case 'trade':
+      // 当事者には相手の名前だけ（中身が見えるのは当事者だけなので、「闇市！」の言い方は当事者以外）
+      if (me !== null && e.from === me) return `${nameOf(e.to)} と ${e.count}枚 交換した`;
+      if (me !== null && e.to === me) return `${nameOf(e.from)} と ${e.count}枚 交換した`;
+      return `闇市！ ${nameOf(e.from)} と ${nameOf(e.to)} が ${e.count}枚 交換した`;
+    case 'callDiscard':
+      return `Q ボンバー！ ${e.ranks.map((r) => callLabel(r)).join('・')}`;
+    case 'instantWin':
+      return `大革命！ ${nameOf(e.seat)} が上がった`;
   }
 }
 
@@ -274,6 +318,8 @@ export function eventLines(events: readonly VisibleEvent[], nameOf: NameOf, me: 
   const out: string[] = [];
   let memo = skip;
   let skipAt = -1;
+  /** 同じ state で大革命を出した席（続く「◯◯ が 1位で 上がった」を重ねない、client-assumptions J7）。 */
+  const instantWin = new Set<SeatId>();
   for (const e of events) {
     const pending = memo !== null && memo.gameNo === e.gameNo ? memo : null;
     memo = nextSkipMemo(memo, e);
@@ -290,6 +336,10 @@ export function eventLines(events: readonly VisibleEvent[], nameOf: NameOf, me: 
       continue;
     }
     if (memo === null) skipAt = -1;
+    if (e.type === 'instantWin') instantWin.add(e.seat);
+    if (e.type === 'placed' && e.reason === 'finish' && instantWin.has(e.seat)) continue;
+    // オーメン：「オーメン！」のあと、革命のメッセージ（design-4 §4.4）
+    if (e.type === 'revolution' && e.rule === 'triple6_revolution') out.push('オーメン！');
     const t = eventMessage(e, nameOf, me);
     if (t !== null) out.push(t);
   }

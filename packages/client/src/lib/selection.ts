@@ -1,8 +1,8 @@
 // 手の選び方（design-client §4.6、§7.1、§7.5）。
 // 出せる手の判定はしない。サーバーから届いた `view.mine.plays`（出せる手の一覧）だけを使う。
 
-import type { CardId, LegalPlay, MyAwaiting, Rank, Suit } from '@chofugo/engine';
-import { faceOf } from './cards.ts';
+import type { CardId, Color, LegalPlay, MyAwaiting, Rank, Suit } from '@chofugo/engine';
+import { faceOf, isRedSuit } from './cards.ts';
 
 function sameSet(a: readonly CardId[], b: readonly CardId[]): boolean {
   if (a.length !== b.length) return false;
@@ -75,12 +75,13 @@ export function afterShapeChosen(play: LegalPlay): PlayStep {
   return play.foul ? { kind: 'confirmFoul', play } : { kind: 'send', play };
 }
 
-export type DimReason = 'notYourTurn' | 'suitLock' | 'seqLock' | 'opening' | 'ban' | 'cannotCombine' | 'weaker';
+export type DimReason = 'notYourTurn' | 'suitLock' | 'seqLock' | 'colorLock' | 'opening' | 'ban' | 'cannotCombine' | 'weaker';
 
 export const DIM_REASON_TEXT: Record<DimReason, string> = {
   notYourTurn: 'いまは自分の番ではない',
   suitLock: '縛りのマークに合わない',
   seqLock: '激縛りの続きに合わない',
+  colorLock: '色縛りの色に合わない',
   opening: '最初の1手にはダイヤの3が必要',
   ban: '独裁で封じられている',
   cannotCombine: '選んだカードと組み合わせられない',
@@ -95,8 +96,10 @@ export const DIM_REASON_TEXT: Record<DimReason, string> = {
  * - 独裁で封じられた数字のカード → 独裁で封じられている（design-3 §4.4。返しの一周でも同じ）
  * - 手番で、激縛りが発動している → 激縛りの続きに合わない（design-2 §4.5）
  * - 縛りがあり、そのカードのマークが縛りのマークにない → 縛りに合わない
+ * - 手番で、5色縛りがあり、そのカード（ジョーカー以外）の色が違う → 色縛りの色に合わない（design-4 §4.3。
+ *   返しの一周のスペ3返し・4止めは色縛りを無視するので理由にしない）
  * - それ以外 → 弱いか、枚数・種類が合わない
- * extra はその2で足した状態（省略すると、その1と同じ判定）。
+ * extra はその2以降で足した状態（省略すると、その1と同じ判定）。
  */
 export function dimReason(
   mine: MyAwaiting | null,
@@ -104,7 +107,7 @@ export function dimReason(
   selected: readonly CardId[],
   card: CardId,
   suitLock: readonly Suit[] | null,
-  extra: { seqLock?: { suits: Suit[]; rank: Rank } | null; openingCard?: CardId | null; ban?: Rank | null } = {},
+  extra: { seqLock?: { suits: Suit[]; rank: Rank } | null; openingCard?: CardId | null; ban?: Rank | null; colorLock?: Color | null } = {},
 ): DimReason {
   if (mine === null || mine.kind === 'exchangeGive' || mine.kind === 'choice' || mine.kind === 'abilitySelect') return 'notYourTurn';
   if (selected.length > 0 && plays.some((p) => p.cards.includes(card))) return 'cannotCombine';
@@ -115,6 +118,8 @@ export function dimReason(
   // 4止めの返しは縛りを無視するので、縛りを理由にしない
   if (mine.kind === 'respond' && mine.rule === 'block_flush_with_4') return 'weaker';
   if (suitLock !== null && f !== null && f.kind === 'normal' && !suitLock.includes(f.suit)) return 'suitLock';
+  const color = extra.colorLock ?? null;
+  if (mine.kind === 'turn' && color !== null && f !== null && f.kind === 'normal' && (isRedSuit(f.suit) ? 'red' : 'black') !== color) return 'colorLock';
   return 'weaker';
 }
 

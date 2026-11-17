@@ -1,8 +1,8 @@
 // 見本ページ（開発のときだけ）。固定のデータで各画面を描く。/dev/gallery?s=<場面>
 // 画像で確かめるために使う（design-client §6、§7.12）。
 
-import type { AbilityId, CardId, SeatId, UsableAbility } from '@chofugo/engine';
-import { ALL_RULE_IDS, DAIFUGO_MODE_DEFAULT_RULES, type RuleId } from '@chofugo/engine';
+import type { AbilityId, CallRank, CardId, Color, SeatId, UsableAbility } from '@chofugo/engine';
+import { ALL_RULE_IDS, DAIFUGO_MODE_DEFAULT_RULES, STAGE1_RULE_IDS, type RuleId } from '@chofugo/engine';
 import type { GameMode, StateMessage } from '@chofugo/server/protocol';
 import type { Anim, Feed } from '../lib/events.ts';
 import type { PlayStep } from '../lib/selection.ts';
@@ -392,14 +392,15 @@ const NAMES12: [string, string, string, string] = ['ながいなまえのひと�
 
 // ---------- その3（超富豪モード）の場面 ----------
 
-const ALL16: RuleId[] = [...ALL_RULE_IDS];
+/** 超富豪モードのルール（第2段階から24種すべて）。 */
+const CHOFUGO_RULES: RuleId[] = [...ALL_RULE_IDS];
 
 /** 特権の選択（選ぶ人）。hand16 なら手札16枚（2段）。 */
 function abilitySelectMine(draft: AbilityId[], slots: number, hand16 = true): StateMessage {
   const hand = hand16 ? HAND16 : HAND12;
   return stateMsg({
     view: playerView({
-      rules: ALL16,
+      rules: CHOFUGO_RULES,
       phase: 'ability',
       prevRanks: [1, 3, 2, 4],
       game: gameView({
@@ -413,7 +414,7 @@ function abilitySelectMine(draft: AbilityId[], slots: number, hand16 = true): St
       mine: { awaitId: 80, kind: 'abilitySelect', slots, draft },
     }),
     matchPhase: 'ability',
-    room: { ...lobby(true).room, phase: 'playing', seats: seats(), config: { mode: 'chofugo', rules: ALL16, gameCount: 5 } },
+    room: { ...lobby(true).room, phase: 'playing', seats: seats(), config: { mode: 'chofugo', rules: CHOFUGO_RULES, gameCount: 5 } },
     deadlines: [deadline(0, 'abilitySelect', 44_000, 80)],
   });
 }
@@ -423,7 +424,7 @@ function abilitySelectOther(names?: [string, string, string, string]): StateMess
   return stateMsg({
     seat: 0,
     view: playerView({
-      rules: ALL16,
+      rules: CHOFUGO_RULES,
       phase: 'ability',
       prevRanks: [3, 1, 2, 4],
       game: gameView({ hand: HAND12, handCounts: [12, 14, 14, 14], abilities: { holder: 1, slots: 2, remaining: 2, selecting: true } }),
@@ -431,7 +432,7 @@ function abilitySelectOther(names?: [string, string, string, string]): StateMess
       mine: null,
     }),
     matchPhase: 'ability',
-    room: { ...lobby(true).room, phase: 'playing', seats: seats(names), config: { mode: 'chofugo', rules: ALL16, gameCount: 5 } },
+    room: { ...lobby(true).room, phase: 'playing', seats: seats(names), config: { mode: 'chofugo', rules: CHOFUGO_RULES, gameCount: 5 } },
     deadlines: [deadline(1, 'abilitySelect', 38_000, 81)],
   });
 }
@@ -468,7 +469,7 @@ function abilityTurn(opts: {
     : [{ ...legal(group(['spade-6', 'heart-6'], 6)), canSkip: true as const }, { ...legal(group(['spade-7', 'heart-7'], 7)), canSkip: true as const }];
   return stateMsg({
     view: playerView({
-      rules: ALL16,
+      rules: CHOFUGO_RULES,
       gameNo: 3,
       prevRanks: [1, 3, 2, 4],
       game: gameView({
@@ -485,7 +486,7 @@ function abilityTurn(opts: {
       awaiting: [{ id: 90, seat: 0, kind: 'turn', timer: 'turn' }],
       mine: { awaitId: 90, kind: 'turn', leader, canPass: !leader, plays, abilities, skipAvailable: unused.includes('skip') },
     }),
-    room: { ...lobby(true).room, phase: 'playing', seats: seats(opts.names), config: { mode: 'chofugo', rules: ALL16, gameCount: 5 } },
+    room: { ...lobby(true).room, phase: 'playing', seats: seats(opts.names), config: { mode: 'chofugo', rules: CHOFUGO_RULES, gameCount: 5 } },
     deadlines: [deadline(0, 'turn', 22_000, 90)],
   });
 }
@@ -494,7 +495,7 @@ function abilityTurn(opts: {
 function peekedTarget(): StateMessage {
   return stateMsg({
     view: playerView({
-      rules: ALL16,
+      rules: CHOFUGO_RULES,
       prevRanks: [3, 1, 2, 4],
       game: gameView({
         hand: HAND12,
@@ -508,7 +509,7 @@ function peekedTarget(): StateMessage {
       awaiting: [{ id: 91, seat: 2, kind: 'turn', timer: 'turn' }],
       mine: null,
     }),
-    room: { ...lobby(true).room, phase: 'playing', seats: seats(), config: { mode: 'chofugo', rules: ALL16, gameCount: 5 } },
+    room: { ...lobby(true).room, phase: 'playing', seats: seats(), config: { mode: 'chofugo', rules: CHOFUGO_RULES, gameCount: 5 } },
     deadlines: [deadline(2, 'turn', 17_000, 91)],
   });
 }
@@ -528,6 +529,147 @@ function chofugoTurnScene(title: string, opts: Parameters<typeof abilityTurn>[0]
           {...(extra.steal ? { initialStealCard: extra.steal } : {})}
           {...(extra.skipOn ? { initialSkipOn: true } : {})}
           {...(extra.selected ? { initialSelected: extra.selected } : {})}
+        />
+      );
+    },
+  };
+}
+
+// ---------- 第2段階（特殊ルール8種）の場面 ----------
+
+const HAND10: CardId[] = HAND12.slice(0, 10);
+
+/** 銀河鉄道・闇市・Q ボンバーの選択（選ぶ本人）。field は出した役の手。 */
+function stage2Choice(opts: {
+  rule: 'triple9_salvage' | 'triple_a_trade' | 'call_discard_on_q';
+  max: number;
+  hand?: CardId[];
+  handCounts?: number[];
+  names?: [string, string, string, string];
+  targets?: SeatId[];
+}): StateMessage {
+  const hand = opts.hand ?? HAND10;
+  const field =
+    opts.rule === 'triple9_salvage'
+      ? group(['spade-9', 'heart-9', 'club-9'], 9)
+      : opts.rule === 'triple_a_trade'
+        ? group(['spade-14', 'heart-14', 'diamond-14'], 14)
+        : group(['spade-12', 'heart-12'], 12);
+  return stateMsg({
+    view: playerView({
+      rules: [...ALL_RULE_IDS],
+      game: gameView({
+        hand,
+        handCounts: opts.handCounts ?? [hand.length, 6, 1, 7],
+        discard: ['club-5', 'diamond-6', 'heart-11'],
+        field: [{ seat: 0, play: field, via: 'turn' }],
+        lastPlayer: 0,
+        choice: { rule: opts.rule, seat: 0, to: null },
+      }),
+      awaiting: [{ id: 100, seat: 0, kind: 'choice', timer: 'choice' }],
+      mine: {
+        awaitId: 100,
+        kind: 'choice',
+        rule: opts.rule,
+        max: opts.max,
+        to: null,
+        ...(opts.rule === 'triple_a_trade' ? { targets: opts.targets ?? [1, 2, 3] } : {}),
+      },
+    }),
+    room: { ...lobby(true).room, phase: 'playing', seats: seats(opts.names), config: { mode: 'custom', rules: [...ALL_RULE_IDS], gameCount: 5 } },
+    deadlines: [deadline(0, 'choice', 11_000, 100)],
+  });
+}
+
+/** 色縛りの札が出ている場。six なら札を6つ（革命・J バック・縛り・激縛り・色縛り・逆回り）。 */
+function colorLockField(color: Color, six: boolean): StateMessage {
+  return stateMsg({
+    view: playerView({
+      rules: [...ALL_RULE_IDS],
+      game: gameView({
+        hand: HAND12,
+        handCounts: [12, 5, 9, 7],
+        field: [{ seat: 1, play: group(color === 'red' ? ['heart-5', 'diamond-5'] : ['spade-5', 'club-5'], 5), via: 'turn' }],
+        lastPlayer: 1,
+        colorLock: color,
+        ...(six
+          ? {
+              revolution: true,
+              tempReverse: true,
+              reversed: false,
+              suitLock: ['heart', 'diamond'] as never,
+              seqLock: { suits: ['heart', 'diamond'], rank: 5 as never },
+              orderReversed: true,
+              direction: -1 as const,
+            }
+          : {}),
+      }),
+      awaiting: [{ id: 101, seat: 0, kind: 'turn', timer: 'turn' }],
+      mine: {
+        awaitId: 101,
+        kind: 'turn',
+        leader: false,
+        canPass: true,
+        // 色縛りの色のカードとジョーカーの組だけが出せる（ほかのカードは暗い）
+        plays: (color === 'red' ? ['heart-6', 'heart-7', 'diamond-8', 'heart-13'] : ['spade-6', 'spade-7', 'club-10', 'spade-11', 'club-14']).map((c) =>
+          legal(group([c, 'joker-0'], Number(c.split('-')[1]), [{ card: 'joker-0', rank: Number(c.split('-')[1]) as never, suit: null }])),
+        ),
+        abilities: [],
+        skipAvailable: false,
+      },
+    }),
+    room: { ...lobby(true).room, phase: 'playing', seats: seats(), config: { mode: 'custom', rules: [...ALL_RULE_IDS], gameCount: 5 } },
+    deadlines: [deadline(0, 'turn', 19_000, 101)],
+  });
+}
+
+/** 自分の番（受け取ったカードの強調・新しいメッセージを見せる）。 */
+function stage2Turn(hand: CardId[]): StateMessage {
+  return stateMsg({
+    view: playerView({
+      rules: [...ALL_RULE_IDS],
+      game: gameView({
+        hand,
+        handCounts: [hand.length, 4, 9, 7],
+        field: [{ seat: 3, play: group(['club-8'], 8), via: 'turn' }],
+        lastPlayer: 3,
+      }),
+      awaiting: [{ id: 102, seat: 0, kind: 'turn', timer: 'turn' }],
+      mine: { awaitId: 102, kind: 'turn', leader: false, canPass: true, plays: hand.map((c) => legal(group([c], 9))), abilities: [], skipAvailable: false },
+    }),
+    room: { ...lobby(true).room, phase: 'playing', seats: seats(), config: { mode: 'custom', rules: [...ALL_RULE_IDS], gameCount: 5 } },
+    deadlines: [deadline(0, 'turn', 24_000, 102)],
+  });
+}
+
+/** 相手の番（メッセージだけを見せる）。 */
+function stage2Their(): StateMessage {
+  return stateMsg({
+    view: playerView({
+      rules: [...ALL_RULE_IDS],
+      game: gameView({ hand: HAND12, handCounts: [12, 4, 9, 7], field: [], lastPlayer: null, revolution: true, reversed: true }),
+      awaiting: [{ id: 103, seat: 2, kind: 'turn', timer: 'turn' }],
+      mine: null,
+    }),
+    room: { ...lobby(true).room, phase: 'playing', seats: seats(), config: { mode: 'custom', rules: [...ALL_RULE_IDS], gameCount: 5 } },
+    deadlines: [deadline(2, 'turn', 26_000, 103)],
+  });
+}
+
+function stage2Scene(title: string, st: () => StateMessage, extra: { line?: string; selected?: CardId[]; target?: SeatId; ranks?: CallRank[]; gift?: CardId[] } = {}): Scene {
+  return {
+    title,
+    render: () => {
+      const s = st();
+      return (
+        <Table
+          state={s}
+          snap={withSnap(s, { line: extra.line ?? null, ...(extra.gift ? { gift: { matchId: 'm1', gameNo: 3, cards: extra.gift } } : {}) })}
+          api={noopApi}
+          fixedNow={NOW}
+          {...(extra.selected ? { initialSelected: extra.selected } : {})}
+          {...(extra.target !== undefined ? { initialTradeTarget: extra.target } : {})}
+          {...(extra.ranks ? { initialCallRanks: extra.ranks } : {})}
         />
       );
     },
@@ -808,14 +950,14 @@ const SCENES: Record<string, Scene> = {
   'lobby-chofugo': {
     title: 'ロビー（超富豪・ホスト、説明を開いた）',
     render: () => {
-      const st = lobbyCustom(true, ALL16, 'chofugo');
+      const st = lobbyCustom(true, CHOFUGO_RULES, 'chofugo');
       return <Lobby state={st} snap={withSnap(st)} api={noopApi} initialOpen="give_on_7" />;
     },
   },
   'lobby-chofugo-guest': {
     title: 'ロビー（超富豪・ホスト以外）',
     render: () => {
-      const st = lobbyCustom(false, ALL16, 'chofugo');
+      const st = lobbyCustom(false, CHOFUGO_RULES, 'chofugo');
       return <Lobby state={st} snap={withSnap(st)} api={noopApi} />;
     },
   },
@@ -873,10 +1015,102 @@ const SCENES: Record<string, Scene> = {
     },
   },
   'play-menu-rules16': {
-    title: 'メニュー（この試合のルール・16種）',
+    title: 'メニュー（この試合のルール・24種）',
     render: () => {
       const st = stateMsg({ view: playerView({ rules: CUSTOM_RULES }), room: { ...theirTurn().room, config: { mode: 'custom', rules: CUSTOM_RULES, gameCount: 5 } } });
       return <Menu state={st} feed={historyFeed()} onClose={() => {}} onLeave={() => {}} initial="rules" />;
+    },
+  },
+  // ---------- 第2段階（特殊ルール8種、design-4 §4） ----------
+  'lobby-custom24': {
+    title: 'ロビー（カスタム・24種すべて ON）',
+    render: () => {
+      const st = lobbyCustom(true, [...ALL_RULE_IDS]);
+      return <Lobby state={st} snap={withSnap(st)} api={noopApi} />;
+    },
+  },
+  'lobby-custom24-open': {
+    title: 'ロビー（カスタム・24種、銀河鉄道の説明を開いた）',
+    render: () => {
+      const st = lobbyCustom(true, [...ALL_RULE_IDS]);
+      return <Lobby state={st} snap={withSnap(st)} api={noopApi} initialOpen="triple9_salvage" />;
+    },
+  },
+  'lobby-custom-6locked': {
+    title: 'ロビー（カスタム・J バックが OFF で6戻しを押せない）',
+    render: () => {
+      const st = lobbyCustom(true, [...DAIFUGO_MODE_DEFAULT_RULES, 'color_lock_on_5', 'triple6_revolution', 'call_discard_on_q']);
+      return <Lobby state={st} snap={withSnap(st)} api={noopApi} />;
+    },
+  },
+  'lobby-custom16': {
+    title: 'ロビー（カスタム・第1段階の16種だけ ON）',
+    render: () => {
+      const st = lobbyCustom(true, [...STAGE1_RULE_IDS]);
+      return <Lobby state={st} snap={withSnap(st)} api={noopApi} />;
+    },
+  },
+  'lobby-chofugo24': {
+    title: 'ロビー（超富豪・24種、ホスト以外）',
+    render: () => {
+      const st = lobbyCustom(false, CHOFUGO_RULES, 'chofugo');
+      return <Lobby state={st} snap={withSnap(st)} api={noopApi} />;
+    },
+  },
+  'play-salvage': stage2Scene('対戦（銀河鉄道の選択・1枚を選んだ）', () => stage2Choice({ rule: 'triple9_salvage', max: 2 }), { selected: ['club-3'] }),
+  'play-salvage-0': stage2Scene('対戦（銀河鉄道の選択・0枚）', () => stage2Choice({ rule: 'triple9_salvage', max: 2, hand: HAND16, handCounts: [16, 9, 8, 7] })),
+  'play-trade': stage2Scene('対戦（闇市・相手を選ぶ前）', () => stage2Choice({ rule: 'triple_a_trade', max: 2 }), { line: 'あなた が Aを3枚 出した' }),
+  'play-trade-picked': stage2Scene('対戦（闇市・相手と2枚を選んだ）', () => stage2Choice({ rule: 'triple_a_trade', max: 2 }), { target: 3, selected: ['club-3', 'diamond-4'] }),
+  'play-trade-1': stage2Scene('対戦（闇市・残り1枚の相手を選んだ）', () => stage2Choice({ rule: 'triple_a_trade', max: 2 }), { target: 2, selected: ['diamond-4'] }),
+  'play-trade-12': stage2Scene(
+    '対戦（闇市・12文字の名前・手札16枚）',
+    () => stage2Choice({ rule: 'triple_a_trade', max: 2, names: NAMES12, hand: HAND16, handCounts: [16, 13, 12, 13] }),
+    { target: 1 },
+  ),
+  'play-call': stage2Scene('対戦（Q ボンバー・2個まで、7 と JOKER を選んだ）', () => stage2Choice({ rule: 'call_discard_on_q', max: 2 }), { ranks: [7 as CallRank, 'joker'], line: 'あなた が Qを2枚 出した' }),
+  'play-call-16': stage2Scene('対戦（Q ボンバー・手札16枚・0個）', () => stage2Choice({ rule: 'call_discard_on_q', max: 3, hand: HAND16, handCounts: [16, 9, 8, 7] })),
+  'play-call-empty': stage2Scene('対戦（Q ボンバー・手札0枚）', () => stage2Choice({ rule: 'call_discard_on_q', max: 1, hand: [], handCounts: [0, 9, 8, 7] }), { ranks: [12 as CallRank] }),
+  'play-colorlock': stage2Scene('対戦（色縛り 赤・色の合わないカードは暗い）', () => colorLockField('red', false), { line: '5色縛り！ 赤だけ' }),
+  'play-colorlock-black': stage2Scene('対戦（色縛り 黒）', () => colorLockField('black', false), { line: '色縛りの色に合わない' }),
+  'play-badges6': stage2Scene('対戦（札が6つ：革命・J バック・縛り・激縛り・色縛り・逆回り）', () => colorLockField('red', true)),
+  'play-salvage-gift': stage2Scene('対戦（銀河鉄道で引いたカード）', () => stage2Turn(HAND12), { line: '銀河鉄道！ あなた が 2枚 交換した', gift: ['spade-11', 'club-14'] }),
+  'play-trade-gift': stage2Scene('対戦（闇市で受け取ったカード・相手の側）', () => stage2Turn(HAND12), { line: 'たろう と 2枚 交換した', gift: ['diamond-4', 'spade-6'] }),
+  'play-msg-trade': stage2Scene('対戦（メッセージ：闇市・当事者以外）', () => stage2Their(), { line: '闇市！ たろう と ゆい が 2枚 交換した' }),
+  'play-msg-trade-12': {
+    title: '対戦（メッセージ：闇市・12文字の名前）',
+    render: () => {
+      const st = stage2Their();
+      const s2 = { ...st, room: { ...st.room, seats: seats(NAMES12) } };
+      return <Table state={s2} snap={withSnap(s2, { line: '闇市！ ABCDEFGHIJKL と じゅうにもじのなまえだよ が 2枚 交換した' })} api={noopApi} fixedNow={NOW} />;
+    },
+  },
+  'play-msg-death': stage2Scene('対戦（メッセージ：DEATH）', () => stage2Their(), { line: 'DEATH！ 3人が1枚ずつ捨てた' }),
+  'play-msg-call': stage2Scene('対戦（メッセージ：Q ボンバー）', () => stage2Their(), { line: 'Q ボンバー！ 7・K・JOKER' }),
+  'play-msg-omen': stage2Scene('対戦（メッセージ：オーメンのあとの革命）', () => stage2Their(), { line: '革命！' }),
+  'play-msg-6': stage2Scene('対戦（メッセージ：6戻し）', () => stage2Their(), { line: '6戻し！ J バック解除' }),
+  'play-msg-instant': stage2Scene('対戦（メッセージ：大革命）', () => stage2Their(), { line: '大革命！ ゆい が上がった' }),
+  'play-menu-effects': {
+    title: 'メニュー（出たカード・DEATH・銀河鉄道・闇市・Q ボンバー・大革命）',
+    render: () => {
+      const st = stage2Their();
+      const feed: Feed = {
+        ...historyFeed(),
+        history: [
+          { seq: 1, seat: 1, cards: ['club-4', 'diamond-4', 'heart-4'], via: 'turn' },
+          { seq: 2, seat: 2, cards: ['joker-0'], via: 'effect', rule: 'triple4_purge' },
+          { seq: 2, seat: 3, cards: ['club-14'], via: 'effect', rule: 'triple4_purge' },
+          { seq: 2, seat: 0, cards: ['spade-14'], via: 'effect', rule: 'triple4_purge' },
+          { seq: 3, seat: 0, cards: ['spade-9', 'heart-9', 'club-9'], via: 'turn' },
+          { seq: 4, seat: 0, cards: ['club-3', 'diamond-5'], via: 'effect', rule: 'triple9_salvage' },
+          { seq: 5, seat: 0, cards: ['club-6', 'heart-7'], via: 'effect', rule: 'triple_a_trade' },
+          { seq: 5, seat: 1, cards: ['spade-13', 'heart-10'], via: 'effect', rule: 'triple_a_trade' },
+          { seq: 6, seat: 2, cards: ['club-12', 'diamond-12'], via: 'turn' },
+          { seq: 7, seat: 1, cards: ['spade-7', 'diamond-7'], via: 'effect', rule: 'call_discard_on_q' },
+          { seq: 8, seat: 3, cards: ['spade-15', 'heart-15', 'club-15', 'diamond-15'], via: 'turn' },
+          { seq: 9, seat: 3, cards: ['spade-3', 'heart-8', 'club-10', 'diamond-11', 'spade-12', 'heart-13'], via: 'effect', rule: 'quad2_instant_win' },
+        ],
+      };
+      return <Menu state={st} feed={feed} onClose={() => {}} onLeave={() => {}} initial="history" />;
     },
   },
 };

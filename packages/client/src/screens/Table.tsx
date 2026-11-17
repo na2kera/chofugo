@@ -2,9 +2,10 @@
 // 上から：上の帯 / 相手3人 / 場 / メッセージ / 自分 / 手札 / ボタン。
 // その3：特権の選択（matchPhase 'ability'）も同じ骨組みで、場の枠の位置に特権の一覧を出す（design-3 §4.2）。
 // 対戦中は、自分の番で未使用の特権があるときだけ、メッセージの欄の下に特権のボタンを並べる（§4.3）。
+// 第2段階：闇市・Q ボンバーの選択では、場の枠の位置に選択の枠を出す（design-4 §4.2。強奪の枠・独裁の枠と同じ形）。
 
 import { useState } from 'react';
-import type { AbilityId, CardId, LegalPlay, SeatId } from '@chofugo/engine';
+import type { AbilityId, CallRank, CardId, LegalPlay, SeatId } from '@chofugo/engine';
 import type { CardLook } from '../components/Card.tsx';
 import { Field, type FieldMotion } from '../components/Field.tsx';
 import { Hand } from '../components/Hand.tsx';
@@ -12,7 +13,19 @@ import { Opponent } from '../components/Opponent.tsx';
 import { TimeBar } from '../components/TimeBar.tsx';
 import { PLACE_TITLE, shapeChoiceLabel } from '../lib/cards.ts';
 import { evaluateExchange, exchangePrompt, toggleExchange } from '../lib/exchange.ts';
-import { choiceButtons, choiceCards, choicePrompt, toggleChoice } from '../lib/choice.ts';
+import {
+  choiceButtons,
+  choiceCards,
+  choiceKindOf,
+  chooseBody,
+  choicePrompt,
+  SKIP_CHOOSE_BODY,
+  toggleCall,
+  toggleChoice,
+  tradeCount,
+  trimForTrade,
+} from '../lib/choice.ts';
+import { CallPanel, TradePanel } from './ChoicePanels.tsx';
 import { opponentOrder, relativePos, seatName } from '../lib/seats.ts';
 import {
   afterShapeChosen,
@@ -56,9 +69,12 @@ type Props = ScreenProps & {
   initialPanel?: AbilityPanel;
   initialStealCard?: CardId;
   initialSkipOn?: boolean;
+  /** 見本ページ用：闇市で選んだ相手・Q ボンバーで選んだ数字。 */
+  initialTradeTarget?: SeatId;
+  initialCallRanks?: CallRank[];
 };
 
-export function Table({ state, snap, api, fixedNow, initialSelected, initialStep, initialMenu, initialPanel, initialStealCard, initialSkipOn }: Props) {
+export function Table({ state, snap, api, fixedNow, initialSelected, initialStep, initialMenu, initialPanel, initialStealCard, initialSkipOn, initialTradeTarget, initialCallRanks }: Props) {
   const view = state.view!;
   const game = view.game!;
   const me = view.seat;
@@ -76,6 +92,9 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
   const [panelS, setPanelS] = useState<Scoped<AbilityPanel | null>>({ key, value: initialPanel ?? null });
   const [stealS, setStealS] = useState<Scoped<CardId | null>>({ key, value: initialStealCard ?? null });
   const [skipS, setSkipS] = useState<Scoped<boolean>>({ key, value: initialSkipOn ?? false });
+  // 闇市の相手・Q ボンバーの数字も、試合・ゲーム・待ちの番号に結び付ける（選択と同じ寿命）
+  const [tradeS, setTradeS] = useState<Scoped<SeatId | null>>({ key, value: initialTradeTarget ?? null });
+  const [callS, setCallS] = useState<Scoped<CallRank[]>>({ key, value: initialCallRanks ?? [] });
   /** 最後に出した「出せない理由」（ダイヤの3の案内より優先して見せるため）。 */
   const [dimLine, setDimLine] = useState<string | null>(null);
   const selected = scopedValue(sel, key, defaultSel);
@@ -84,6 +103,13 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
   const stealCard = panel === 'steal' ? scopedValue(stealS, key, null) : null;
   const skipOn = mine !== null && mine.kind === 'turn' && mine.skipAvailable ? scopedValue(skipS, key, false) : false;
   const peekedMine = new Set(game.peekedMine ?? []);
+  // 選択の待ちの種類（7渡し give・10捨て discard・銀河鉄道 salvage・闇市 trade・Q ボンバー call）
+  const choiceKind = mine !== null && mine.kind === 'choice' ? choiceKindOf(mine.rule) : null;
+  const tradeTargets = mine !== null && mine.kind === 'choice' ? (mine.targets ?? []) : [];
+  const tradeTargetRaw = choiceKind === 'trade' ? scopedValue(tradeS, key, null) : null;
+  const tradeTarget = tradeTargetRaw !== null && tradeTargets.includes(tradeTargetRaw) ? tradeTargetRaw : null;
+  const tradeN = mine !== null && mine.kind === 'choice' && choiceKind === 'trade' ? tradeCount(mine, game.handCounts, tradeTarget) : null;
+  const callRanks = choiceKind === 'call' ? scopedValue(callS, key, []) : [];
   const canAct = snap.ready && snap.pending === null && !state.room.paused;
   const names = (seat: SeatId) => seatName(state.room.seats, seat);
   const deadlineOf = (seat: SeatId) => state.deadlines.find((d) => d.seat === seat) ?? null;
@@ -111,11 +137,16 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
       const next = toggleExchange(mine, hand, selected, id);
       if (next !== null) setSel({ key, value: next });
     };
+  } else if (mine !== null && mine.kind === 'choice' && choiceKind === 'call') {
+    // Q ボンバー：カードは選ばない（数字は場の位置の枠で選ぶ）。手札は暗くせず、押しても何も起きない
+    lookOf = () => 'normal';
   } else if (mine !== null && mine.kind === 'choice') {
-    // 7渡し・10捨て：手札のどのカードも、上限まで選べる（design-2 §4.2）
+    // 7渡し・10捨て・銀河鉄道：手札のどのカードも、上限まで選べる（design-2 §4.2、design-4 §4.2）。
+    // 闇市：相手を選んだあとは、ちょうどの枚数（min(上限, 相手の手札)）まで。相手を選ぶ前は上限まで（client-assumptions J5）
+    const limit = { max: tradeN ?? mine.max };
     lookOf = (id) => (selected.includes(id) ? 'sel' : 'normal');
     onPress = (id) => {
-      const next = toggleChoice(mine, hand, selected, id);
+      const next = toggleChoice(limit, hand, selected, id);
       if (next !== null) setSel({ key, value: next });
     };
   } else if (mine !== null && mine.kind === 'turn' && panel === 'steal') {
@@ -135,7 +166,7 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
       if (step.kind !== 'none') setStepS({ key, value: NO_STEP });
       const next = toggleCard(hand, plays, selected, id);
       if (next === null) {
-        const text = DIM_REASON_TEXT[dimReason(mine, plays, selected, id, game.suitLock, { seqLock: game.seqLock, openingCard: game.openingCard, ban: game.ban })];
+        const text = DIM_REASON_TEXT[dimReason(mine, plays, selected, id, game.suitLock, { seqLock: game.seqLock, openingCard: game.openingCard, ban: game.ban, colorLock: game.colorLock })];
         setDimLine(text);
         api.showLine(text);
         return;
@@ -190,11 +221,23 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
     }
     if (api.sendAction({ type: 'respond', awaitId: mine.awaitId, cards }, skip ? 'skip' : 'respond')) markActed();
   };
+  const chooseInput = { hand, picked: selected, handCounts: game.handCounts, target: tradeTarget, ranks: callRanks };
   const onChoose = (skip: boolean) => {
     if (mine === null || mine.kind !== 'choice') return;
-    const cards = skip ? [] : choiceCards(mine, hand, selected);
-    if (!skip && cards.length === 0) return;
-    if (api.sendAction({ type: 'choose', awaitId: mine.awaitId, cards }, skip ? 'chooseSkip' : 'choose')) markActed();
+    // 種類に合わない項目は engine が拒否するので、送る内容は chooseBody で種類ごとに作る（闇市だけ target、Q ボンバーは ranks だけ）
+    const body = skip ? SKIP_CHOOSE_BODY : chooseBody(mine, chooseInput);
+    if (body === null) return;
+    if (api.sendAction({ type: 'choose', awaitId: mine.awaitId, ...body }, skip ? 'chooseSkip' : 'choose')) markActed();
+  };
+  const onTradeTarget = (seat: SeatId | null) => {
+    if (mine === null || mine.kind !== 'choice') return;
+    setTradeS({ key, value: seat });
+    // 相手を変えて枚数が減ったら、あとから選んだカードを残す（design-4 §4.2）
+    setSel({ key, value: trimForTrade(selected, tradeCount(mine, game.handCounts, seat)) });
+  };
+  const onCallRank = (r: CallRank) => {
+    if (mine === null || mine.kind !== 'choice') return;
+    setCallS({ key, value: toggleCall(mine.max, callRanks, r) });
   };
   // ---------- 特権 ----------
   const onDraft = (id: AbilityId) => {
@@ -285,7 +328,8 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
   } else if (rr !== null && rr.asking !== null && rr.asking !== me) {
     line = `${names(rr.asking)} が考えています`;
   } else if (mine !== null && mine.kind === 'choice') {
-    line = choicePrompt(mine);
+    // 闇市で相手を選ぶ前と Q ボンバーは案内を出さない（直前のメッセージのまま。枠の見出しで分かる）
+    line = choicePrompt(mine, tradeN) ?? line;
   } else if (game.choice !== null && game.choice.seat !== me) {
     line = `${names(game.choice.seat)} が選んでいます`;
   } else if (mine !== null && mine.kind === 'turn' && game.openingCard !== null && !(dimLine !== null && snap.line === dimLine)) {
@@ -323,14 +367,15 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
       </div>
     );
   } else if (mine !== null && mine.kind === 'choice') {
-    const picked = choiceCards(mine, hand, selected);
+    const picked = choiceKind === 'trade' ? selected.filter((x) => hand.includes(x)) : choiceCards(mine, hand, selected);
     const label = choiceButtons(mine, picked.length);
+    const sendable = chooseBody(mine, chooseInput) !== null;
     actions = (
       <div className={s.actions}>
         <button type="button" className="f btn2" disabled={!canAct} onClick={() => onChoose(true)}>
           {label.skip}
         </button>
-        <button type="button" className="f btn" disabled={!canAct || picked.length === 0} onClick={() => onChoose(false)}>
+        <button type="button" className="f btn" disabled={!canAct || !sendable} onClick={() => onChoose(false)}>
           {label.send}
         </button>
       </div>
@@ -434,6 +479,10 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
 
       {mine !== null && mine.kind === 'abilitySelect' ? (
         <AbilitySelectList mine={mine} disabled={!canAct} onToggle={onDraft} />
+      ) : mine !== null && mine.kind === 'choice' && choiceKind === 'trade' ? (
+        <TradePanel targets={tradeTargets} handCounts={game.handCounts} target={tradeTarget} nameOf={names} disabled={!canAct} onTarget={onTradeTarget} />
+      ) : mine !== null && mine.kind === 'choice' && choiceKind === 'call' ? (
+        <CallPanel max={mine.max} picked={callRanks} disabled={!canAct} onToggle={onCallRank} />
       ) : mine !== null && mine.kind === 'turn' && panel !== null ? (
         <AbilityPanelBox panel={panel} mine={mine} nameOf={names} stealCard={stealCard} disabled={!canAct} onUse={onUse} onClose={closePanel} />
       ) : (
@@ -446,6 +495,7 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
         seqLock={game.seqLock}
         orderReversed={game.orderReversed}
         ban={game.ban}
+        colorLock={game.colorLock}
         motion={motion}
         {...(motionKey !== undefined ? { motionKey } : {})}
       />

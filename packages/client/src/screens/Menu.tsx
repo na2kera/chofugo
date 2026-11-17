@@ -74,7 +74,7 @@ export function Menu({ state, feed, onClose, onLeave, initial = 'top' }: Props) 
         )}
 
         {sec === 'rules' && (
-          // カスタムモードでは16種まで並ぶので、入りきらなければ縦にスクロールする
+          // カスタムモード・超富豪モードでは24種まで並ぶので、入りきらなければ縦にスクロールする
           <ul className={`${s.rows} ${s.scroll}`}>
             {state.room.config.rules.map((r) => (
               <li key={r} className={s.row}>{ruleName(r)}</li>
@@ -87,7 +87,7 @@ export function Menu({ state, feed, onClose, onLeave, initial = 'top' }: Props) 
           <ol className={`${s.rows} ${s.scroll}`}>
             {history.length === 0 && <li className={`${s.row} mut`}>まだない</li>}
             {history.map((h) => (
-              <li key={h.seq} className={s.hrow}>
+              <li key={`${h.seq}:${h.seat}`} className={s.hrow}>
                 <span className={s.hname}>{seatName(state.room.seats, h.seat, me)}</span>
                 <span className={s.hcards}>
                   {h.cards.map((c) => (
@@ -95,6 +95,8 @@ export function Menu({ state, feed, onClose, onLeave, initial = 'top' }: Props) 
                   ))}
                   {/* 10捨てで捨てたカードには「10捨て」と添える（design-2 §4.5） */}
                   {h.via === 'discard' && <span className="mut">10捨て</span>}
+                  {/* 第2段階の効果で動いたカードには、ルール名を添える（design-4 §4.4） */}
+                  {h.via === 'effect' && h.rule !== undefined && <span className="mut">{ruleName(h.rule)}</span>}
                 </span>
               </li>
             ))}

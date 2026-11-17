@@ -1,6 +1,6 @@
 // ロビー（design-client §4.3、design-2 §4.1）。ホストだけが設定を操作できる。ホスト以外には同じ表示を操作できない形で見せる。
-// ルールの枠のいちばん上にモードの切り替え（大富豪・カスタム・超富豪）。カスタムは「定番」8種と「応用」8種を同じ2列で並べる。
-// 超富豪（design-3 §4.1）は16種すべて ON で固定。操作できない形で見せ、その上に1行「前の大富豪が 特権を使える」。
+// ルールの枠のいちばん上にモードの切り替え（大富豪・カスタム・超富豪）。カスタムは「定番」8種・「応用」8種・「特殊」8種（design-4 §4.1）を同じ2列で並べる。
+// 超富豪（design-3 §4.1）は24種すべて ON で固定。操作できない形で見せ、その上に1行「前の大富豪が 特権を使える」。
 // 設定は送るだけで、正しい形に直すのはサーバー（モードで選べないルール・前提のないルールは外れて届く）。
 
 import { Fragment, useState } from 'react';
@@ -10,7 +10,7 @@ import { Logo } from '../components/Logo.tsx';
 import { seatName } from '../lib/seats.ts';
 import { ARROW_GLYPHS } from '../pixel/patterns.ts';
 import { Pixel } from '../pixel/Pixel.tsx';
-import { ADVANCED_RULE_ORDER, LOBBY_RULE_ORDER, RULES_TEXT } from '../rules-text.ts';
+import { ADVANCED_RULE_ORDER, LOBBY_RULE_ORDER, RULES_TEXT, SPECIAL_RULE_ORDER } from '../rules-text.ts';
 import { InviteLink } from './InviteLink.tsx';
 import type { ScreenProps } from './types.ts';
 import s from './Lobby.module.css';
@@ -21,7 +21,7 @@ const MODES: { value: GameMode; label: string }[] = [
   { value: 'chofugo', label: '超富豪' },
 ];
 
-/** 前提のルールが OFF なので押せない（4止めは8切りが前提）。 */
+/** 前提のルールが OFF なので押せない（4止めは8切り、6戻しは J バックが前提）。 */
 function missingRequirement(id: RuleId, rules: readonly RuleId[]): boolean {
   return (RULE_MODULES.find((m) => m.id === id)?.requires ?? []).some((r) => !rules.includes(r));
 }
@@ -184,6 +184,8 @@ export function Lobby({ state, snap, api, initialOpen }: ScreenProps & { initial
             {ruleGrid(LOBBY_RULE_ORDER)}
             <h3 className={s.sub}>応用</h3>
             {ruleGrid(ADVANCED_RULE_ORDER)}
+            <h3 className={s.sub}>特殊</h3>
+            {ruleGrid(SPECIAL_RULE_ORDER)}
           </>
         ) : (
           ruleGrid(LOBBY_RULE_ORDER)
