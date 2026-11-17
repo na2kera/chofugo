@@ -79,6 +79,25 @@ describe('大革命', () => {
     expect(ev[4]).toMatchObject({ seat: 2, place: 4, reason: 'last' });
     expect(d.state.phase).toBe('gameResult');
     expect(d.game.field).toHaveLength(1);
+    // 終了後に内部の待ち・保留が残っていない（awaiting(s) は結果のフェーズでいつも空なので直接見る）
+    expect(d.game.awaiting).toHaveLength(0);
+    expect(d.game.pending).toBeNull();
+  });
+
+  it('大革命の1位で都落ちが起き、残り1人が last になってゲームが終わる', () => {
+    // 席3は反則で4位に確定済み。席0（前の大富豪ではない）が大革命で1位 → 前の大富豪の席2が都落ちで3位 → 席1が last で2位
+    const s = scene({ rules: [...R, 'dethrone'], hands: [`${QUAD} S5`, 'H3 H4', 'D3 D4', ''], turn: 0, prevRanks: [2, 3, 1, 4] });
+    s.game!.bottomOrder = [3];
+    s.game!.placeReasons[3] = 'foul';
+    const d = new Driver(s);
+    const ev = d.play(0, QUAD);
+    expect(ev.map((e) => e.type)).toEqual(['play', 'revolution', 'instantWin', 'placed', 'dethrone', 'placed', 'placed', 'gameEnd']);
+    expect(ev[3]).toMatchObject({ seat: 0, place: 1, reason: 'finish' });
+    expect(ev[5]).toMatchObject({ seat: 2, place: 3, reason: 'dethrone' });
+    expect(ev[6]).toMatchObject({ seat: 1, place: 2, reason: 'last' });
+    expect(d.state.phase).toBe('gameResult');
+    expect(d.game.awaiting).toHaveLength(0);
+    expect(d.game.pending).toBeNull();
   });
 
   it('逆回り中の大革命のあとの親は、場の効果を解除したあとの向きで次の人', () => {

@@ -93,6 +93,9 @@ describe('Q ボンバー', () => {
       [3, 4, 'last'],
     ]);
     expect(d.state.phase).toBe('gameResult');
+    // Q ボンバーの選択の保留が終了後に残っていない（awaiting(s) は結果のフェーズでいつも空なので直接見る）
+    expect(d.game.awaiting).toHaveLength(0);
+    expect(d.game.pending).toBeNull();
   });
 
   it('前の大富豪が同時に0枚になっていても、先にほかの人が1位になれば都落ちする', () => {

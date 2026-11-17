@@ -247,6 +247,9 @@ export function checkInvariants(s: MatchState): void {
     if (last === undefined) throw new Error('no result');
     if (last.deltas.reduce((a, b) => a + b, 0) !== 0) throw new Error('score sum not zero');
     if ([...last.places].sort().join() !== '1,2,3,4') throw new Error('places not unique');
+    // awaiting(s) は結果のフェーズでいつも空を返すので、内部の待ちと保留は直接見る
+    if (g.awaiting.length !== 0) throw new Error(`phase ${s.phase} has ${g.awaiting.length} internal awaiting`);
+    if (g.pending !== null) throw new Error(`phase ${s.phase} has pending ${g.pending.type}`);
   } else if (awaiting(s).length === 0) {
     throw new Error(`phase ${s.phase} awaits nobody`);
   }
