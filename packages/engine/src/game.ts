@@ -1,19 +1,22 @@
 // 中心の処理: 手番、パス、場の流れ、効果の列、返しの一周、順位の確定。
 // ルールごとの判断はすべて rules/ のモジュールに問い合わせる。
 
-import { sortCardIds, type CardId } from './cards.ts';
+import { cardOf, sortCardIds, type CardId } from './cards.ts';
 import {
   beats,
+  strongestCards,
   enumerateGroupSets,
   enumerateRunSets,
   interpretations,
   isUnbeatableJokers,
   strongerRun,
 } from './hand.ts';
+import { sample } from './rng.ts';
 import { activeModules, findModule, type RuleCtx, type RuleModule } from './rules/index.ts';
 import { banViolation, canSkipPlay, decideAbilityGrant, hasUnused } from './abilities.ts';
 import {
   SEATS,
+  type CallRank,
   type Effect,
   type FieldPlay,
   type FlushReason,
@@ -315,22 +318,29 @@ export function applyStarterRules(c: Ctx): void {
 
 // ---------- 効果 ----------
 
-/** 効果の優先順（小さいほうが先。同じ値は集めた順。design-2 §2.2）。 */
+/**
+ * 効果の優先順（小さいほうが先。同じ値は集めた順。design-2 §2.2、design-4 §2.3）。
+ * 第2段階で値を付け直したが、既存の効果どうしの順は変わらない。
+ */
 const EFFECT_PRIORITY: Record<Effect['type'], number> = {
   toggleRevolution: 0, // 革命を先に（§6.0.1）
-  setTempReverse: 1, // 数字の効果
+  setTempReverse: 1, // 状態の効果（数字の効果）
   setSuitLock: 1,
   clearSuitLock: 1,
   setSeqLock: 1,
   clearSeqLock: 1,
   setOrderReverse: 1,
   clearOpening: 1,
-  handChoice: 2, // 自分の手札を動かす効果（7渡し・10捨て）
-  finishCheck: 3, // 上がりの判定（返しの一周より前、§14.3）
-  forceLast: 3,
-  returnRound: 4,
-  skip: 5,
-  flush: 6,
+  setColorLock: 1,
+  clearColorLock: 1,
+  handChoice: 2, // 手札を動かす効果（7渡し・10捨て・銀河鉄道・闇市・Q ボンバー、DEATH）
+  purge: 2,
+  instantWin: 3, // 大革命
+  finishCheck: 4, // 全員の上がりの判定（返しの一周より前、§14.3）
+  forceLast: 4,
+  returnRound: 5,
+  skip: 6,
+  flush: 7,
 };
 
 function sortEffects(effects: Effect[]): Effect[] {
@@ -347,11 +357,19 @@ function applyStateEffect(c: Ctx, e: Effect, source: SeatId | null = null): bool
     case 'toggleRevolution':
       g.revolution = !g.revolution;
       if (source !== null) g.revolutionBy = source; // 最後に革命を切り替えた席（その3の CPU の判断に使う）
-      emit(c, { type: 'revolution', active: g.revolution });
+      // rule は役で起きたときだけ載せる（ないときは項目ごと付けない。既存の出来事の形を変えない）
+      emit(c, e.rule === undefined ? { type: 'revolution', active: g.revolution } : { type: 'revolution', active: g.revolution, rule: e.rule });
       return false;
     case 'setTempReverse':
       g.tempReverse = e.active;
-      emit(c, { type: 'tempReverse', active: e.active });
+      emit(c, e.rule === undefined ? { type: 'tempReverse', active: e.active } : { type: 'tempReverse', active: e.active, rule: e.rule });
+      return false;
+    case 'setColorLock':
+      g.colorLock = e.color;
+      emit(c, { type: 'colorLock', color: e.color }); // モジュールは成立するときだけこの効果を出す
+      return false;
+    case 'clearColorLock':
+      g.colorLock = null;
       return false;
     case 'setSuitLock':
       g.suitLock = e.suits.slice();
@@ -381,6 +399,8 @@ function applyStateEffect(c: Ctx, e: Effect, source: SeatId | null = null): bool
     case 'forceLast':
       return placeSeat(c, e.seat, e.reason);
     case 'handChoice':
+    case 'purge':
+    case 'instantWin':
     case 'finishCheck':
     case 'returnRound':
     case 'skip':
@@ -400,17 +420,36 @@ export function runEffects(c: Ctx, source: SeatId, effects: readonly Effect[]): 
     const e = effects[i] as Effect;
     switch (e.type) {
       case 'handChoice': {
-        if ((g.hands[source] ?? []).length === 0) break; // 手札が0枚なら選択をはさまない（§16.4）
-        const mod = findModule(e.rule);
+        const kind = findModule(e.rule)?.choiceKind;
+        const handCount = (g.hands[source] ?? []).length;
+        let max = e.max;
+        if (kind === 'salvage') {
+          // 銀河鉄道: 手札と捨て札の少ないほうまで。0 なら選択をはさまない（design-4 §2.4）
+          max = Math.min(e.max, handCount, g.discard.length);
+          if (max === 0) break;
+        } else if (kind === 'trade') {
+          // 闇市: 手札が0枚なら選択をはさまない
+          max = Math.min(e.max, handCount);
+          if (max === 0) break;
+        } else if (kind !== 'call') {
+          // 7渡し・10捨て: 手札が0枚なら選択をはさまない（§16.4）。Q ボンバーは0枚でも宣言できる（§15.1）
+          if (handCount === 0) break;
+        }
         // 7渡しの相手は、待ちを作る時点の向きで次の、まだ上がっていない人（パス済みでもよい）
-        const to = mod?.choiceTarget === 'give' ? nextSeatWhere(g, source, (s) => isActive(g, s)) : null;
-        g.pending = { type: 'choice', rule: e.rule, seat: source, max: e.max, to, rest: effects.slice(i + 1) };
-        emit(c, { type: 'choiceStart', rule: e.rule, seat: source, max: e.max, to });
+        const to = kind === 'give' ? nextSeatWhere(g, source, (s) => isActive(g, s)) : null;
+        g.pending = { type: 'choice', rule: e.rule, seat: source, max, to, rest: effects.slice(i + 1) };
+        emit(c, { type: 'choiceStart', rule: e.rule, seat: source, max, to });
         startChoiceAwait(c, source);
         return;
       }
+      case 'purge':
+        purge(c, source);
+        break;
+      case 'instantWin':
+        if (instantWin(c, source)) return; // ゲームが終わったら、場は流さずに止める（design-4 §6.2）
+        break;
       case 'finishCheck':
-        if ((g.hands[source] ?? []).length === 0 && placeSeat(c, source, e.foul ? 'foul' : 'finish')) return;
+        if (finishCheck(c, source, e.foul)) return;
         break;
       case 'returnRound': {
         const rest = effects.slice(i + 1);
@@ -448,6 +487,58 @@ export function runEffects(c: Ctx, source: SeatId, effects: readonly Effect[]): 
     }
   }
   advanceFrom(c, source, skip);
+}
+
+/** 出した人から進行方向の順に、残っている席（出した人が残っていなければ、出した人の次から）。 */
+function seatsFrom(g: GameState, source: SeatId): SeatId[] {
+  const out: SeatId[] = [];
+  for (let k = 0; k < 4; k++) {
+    const s = stepSeat(g, source, k);
+    if (isActive(g, s)) out.push(s);
+  }
+  return out;
+}
+
+/**
+ * 全員の上がりの判定（design-4 §2.3、decisions §15.1）。出した人、そのあと進行方向で近い順に、
+ * 残っていて手札が0枚の人の順位を確定する。理由は、出した人が反則上がり（foul）のときだけ foul、ほかは finish。
+ * ゲームが終わったら true。席は1人ずつ確かめ直す（途中の都落ちで確定する席があるため）。
+ */
+function finishCheck(c: Ctx, source: SeatId, foul: boolean): boolean {
+  const g = gameOf(c);
+  for (let k = 0; k < 4; k++) {
+    const s = stepSeat(g, source, k);
+    if (!isActive(g, s) || (g.hands[s] ?? []).length > 0) continue;
+    if (placeSeat(c, s, s === source && foul ? 'foul' : 'finish')) return true;
+  }
+  return false;
+}
+
+/** DEATH: 出した人以外の残っている席が、進行方向で近い順に、手札のいちばん強いカードを1枚捨て札に移す（design-4 §2.4）。 */
+function purge(c: Ctx, source: SeatId): void {
+  const g = gameOf(c);
+  const discards: { seat: SeatId; card: CardId }[] = [];
+  for (const s of seatsFrom(g, source)) {
+    if (s === source) continue;
+    const card = strongestCards(c.s.rng, g.hands[s] ?? [], 1, isReversed(g))[0];
+    if (card === undefined) continue;
+    removeFromHand(g, s, [card]);
+    g.discard.push(card);
+    discards.push({ seat: s, card });
+  }
+  // 順位の確定は、あとの finishCheck に任せる
+  emit(c, { type: 'purge', by: source, discards });
+}
+
+/** 大革命: 出した人の残りの手札を捨て札に移し、その場で上がる（design-4 §2.4）。ゲームが終わったら true。 */
+function instantWin(c: Ctx, source: SeatId): boolean {
+  const g = gameOf(c);
+  if (!isActive(g, source)) return false;
+  const discarded = sortCardIds(g.hands[source] ?? []);
+  g.discard.push(...discarded);
+  g.hands[source] = [];
+  emit(c, { type: 'instantWin', seat: source, discarded });
+  return placeSeat(c, source, 'finish');
 }
 
 // ---------- 場 ----------
@@ -605,16 +696,57 @@ function finishReturnRound(c: Ctx, by: SeatId | null, play: Play | null): void {
   runEffects(c, p.source, [...(mod?.onReturnFailed?.(rc, p) ?? []), ...p.rest]);
 }
 
-/** 7渡し・10捨てで選ぶ（検証は済んでいる前提）。cards が空なら渡さない・捨てない。 */
-export function doChoose(c: Ctx, cards: readonly CardId[]): void {
+/** Q ボンバーの宣言の並び（3〜2、ジョーカーは最後）。 */
+export function sortCallRanks(ranks: readonly CallRank[]): CallRank[] {
+  const key = (r: CallRank) => (r === 'joker' ? 100 : r);
+  return ranks.slice().sort((a, b) => key(a) - key(b));
+}
+
+/**
+ * 選択の待ちで選ぶ（検証は済んでいる前提。design-4 §2.4）。
+ * cards が空（Q ボンバーは ranks が空）なら、渡さない・捨てない・交換しない・使わない・宣言しない。
+ * target は闇市の相手、ranks は Q ボンバーの宣言。
+ */
+export function doChoose(c: Ctx, cards: readonly CardId[], opts: { target?: SeatId; ranks?: readonly CallRank[] } = {}): void {
   const g = gameOf(c);
   const p = g.pending;
   if (p === null || p.type !== 'choice') return;
   g.awaiting = [];
   g.pending = null;
+  const kind = findModule(p.rule)?.choiceKind;
   const chosen = sortCardIds(cards);
-  if (chosen.length === 0) {
+  const ranks = sortCallRanks(opts.ranks ?? []);
+  if (kind === 'call' ? ranks.length === 0 : chosen.length === 0) {
     emit(c, { type: 'choiceSkip', seat: p.seat, rule: p.rule });
+  } else if (kind === 'salvage') {
+    // 銀河鉄道: 置く前の捨て札から引く（自分がいま置いたカードは引かない）
+    const took = sortCardIds(sample(c.s.rng, g.discard, chosen.length));
+    g.discard = g.discard.filter((id) => !took.includes(id));
+    g.discard.push(...chosen);
+    g.hands[p.seat] = sortCardIds([...(g.hands[p.seat] ?? []).filter((id) => !chosen.includes(id)), ...took]);
+    emit(c, { type: 'salvage', seat: p.seat, put: chosen, took });
+  } else if (kind === 'trade') {
+    // 闇市: 相手の「いちばん強いカード」は、受け取る前の相手の手札で決める
+    const to = opts.target as SeatId;
+    const taken = strongestCards(c.s.rng, g.hands[to] ?? [], chosen.length, isReversed(g));
+    g.hands[p.seat] = sortCardIds([...(g.hands[p.seat] ?? []).filter((id) => !chosen.includes(id)), ...taken]);
+    g.hands[to] = sortCardIds([...(g.hands[to] ?? []).filter((id) => !taken.includes(id)), ...chosen]);
+    emit(c, { type: 'trade', from: p.seat, to, given: chosen, taken });
+  } else if (kind === 'call') {
+    // Q ボンバー: 出した人から進行方向の順に、残っている全員が宣言された数字の本物のカード（とジョーカー）を捨てる
+    const discards: { seat: SeatId; cards: CardId[] }[] = [];
+    for (const s of seatsFrom(g, p.seat)) {
+      const out = (g.hands[s] ?? []).filter((id) => {
+        const card = cardOf(id);
+        if (card === null) return false;
+        return card.kind === 'joker' ? ranks.includes('joker') : ranks.includes(card.rank);
+      });
+      if (out.length === 0) continue;
+      removeFromHand(g, s, out);
+      g.discard.push(...out);
+      discards.push({ seat: s, cards: out });
+    }
+    emit(c, { type: 'callDiscard', seat: p.seat, ranks, discards });
   } else {
     removeFromHand(g, p.seat, chosen);
     if (p.to !== null) {

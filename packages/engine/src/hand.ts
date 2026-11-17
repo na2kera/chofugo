@@ -10,6 +10,7 @@ import {
   type Rank,
   type Suit,
 } from './cards.ts';
+import { sample, type RngState } from './rng.ts';
 import type { GroupPlay, Play, RunPlay, Shape } from './types.ts';
 
 type Split = { reals: { id: CardId; suit: Suit; rank: Rank }[]; jokers: CardId[] };
@@ -150,6 +151,31 @@ export function weakestStrength(p: Play, reversed: boolean): number {
 export function strongerRun(a: RunPlay, b: RunPlay, reversed: boolean): RunPlay {
   if (reversed) return a.low <= b.low ? a : b;
   return a.low >= b.low ? a : b;
+}
+
+// ---------- カード1枚の強さ ----------
+
+/** カード1枚の強さ（その時点の向き）。ジョーカーがいちばん強い（Infinity）。知らない ID も Infinity。 */
+export function cardStrength(id: CardId, reversed: boolean): number {
+  const card = cardOf(id);
+  return card === null || card.kind === 'joker' ? Infinity : rankStrength(card.rank, reversed);
+}
+
+/**
+ * 手札のいちばん強いカード n 枚（DEATH・闇市、design-4 §2.4）。その時点の向きで強い順。ジョーカーが最強。
+ * n 枚の境目に同じ強さのカードが並び、その中から選ぶ必要があるときだけ、乱数でその中から選ぶ。
+ * 決まるときは乱数を引かない。返す列はカードの並び順。
+ */
+export function strongestCards(rng: RngState, hand: readonly CardId[], n: number, reversed: boolean): CardId[] {
+  if (n <= 0) return [];
+  if (n >= hand.length) return sortCardIds(hand);
+  const sorted = hand.slice().sort((a, b) => cardStrength(b, reversed) - cardStrength(a, reversed) || compareCardIds(a, b));
+  const edge = cardStrength(sorted[n - 1] as CardId, reversed);
+  const sure = sorted.filter((id) => cardStrength(id, reversed) > edge);
+  const tied = sorted.filter((id) => cardStrength(id, reversed) === edge);
+  const need = n - sure.length;
+  const picked = tied.length === need ? tied : sample(rng, tied, need);
+  return sortCardIds([...sure, ...picked]);
 }
 
 // ---------- 列挙 ----------

@@ -3,6 +3,8 @@
 import { deepClone } from './clone.ts';
 import { exchangeTaskFor } from './exchange.ts';
 import { hasUnused, publicAbilities, usableAbilities } from './abilities.ts';
+import { tradeTargets } from './auto.ts';
+import { findModule } from './rules/index.ts';
 import {
   computeStandings,
   isReversed,
@@ -71,7 +73,10 @@ function myAwaiting(state: MatchState, seat: SeatId): MyAwaiting | null {
     // 候補は手札そのものなので一覧にしない（design-2 §2.7）
     const p = g.pending;
     if (p === null || p.type !== 'choice') return null;
-    return { awaitId: w.id, kind: 'choice', rule: p.rule, max: p.max, to: p.to };
+    const mine: MyAwaiting = { awaitId: w.id, kind: 'choice', rule: p.rule, max: p.max, to: p.to };
+    // 闇市だけ、選べる相手を載せる（ほかの選択には項目ごと付けない）
+    if (findModule(p.rule)?.choiceKind === 'trade') mine.targets = tradeTargets(makeCtx(state), seat);
+    return mine;
   }
   const task = exchangeTaskFor(makeCtx(state), seat);
   if (task === null) return null;
@@ -129,6 +134,7 @@ export function viewFor(state: MatchState, seat: SeatId): PlayerView {
       suitLock: g.suitLock === null ? null : g.suitLock.slice(),
       seqLock: g.seqLock === null ? null : { suits: g.seqLock.suits.slice(), rank: g.seqLock.rank },
       openingCard: g.openingCard,
+      colorLock: g.colorLock,
       choice: pending !== null && pending.type === 'choice' ? { rule: pending.rule, seat: pending.seat, to: pending.to } : null,
       returnRound:
         pending === null || pending.type !== 'returnRound'
@@ -205,6 +211,20 @@ export function eventsFor(events: readonly GameEvent[], seat: SeatId): VisibleEv
         to: e.to,
         count: e.cards.length,
         cards: party ? e.cards.slice() : null,
+      };
+    }
+    if (e.type === 'trade') {
+      // 闇市: 全員に見えるのは誰から誰へ何枚。中身は当事者の2人だけ（design-4 §2.7）
+      const party = e.from === seat || e.to === seat;
+      return {
+        seq: e.seq,
+        gameNo: e.gameNo,
+        type: 'trade',
+        from: e.from,
+        to: e.to,
+        count: e.given.length,
+        given: party ? e.given.slice() : null,
+        taken: party ? e.taken.slice() : null,
       };
     }
     if (e.type === 'abilitiesChosen') {

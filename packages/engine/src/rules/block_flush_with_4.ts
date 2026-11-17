@@ -33,7 +33,8 @@ export const blockFlushWith4: RuleModule = {
   },
   // 省いたときは何も足さない（残りの flush がそのまま処理される）
   onReturnRoundSkipped: () => [],
-  returnIgnores: ['suitLock', 'sequenceLock', 'fieldShape', 'fieldSize', 'notStronger', 'passed'],
+  // 色縛りも無視する（第2段階、§15.2）
+  returnIgnores: ['suitLock', 'sequenceLock', 'fieldShape', 'fieldSize', 'notStronger', 'passed', 'colorLock'],
   returnToDiscard: true,
   returnOptions(ctx, seat) {
     // 手札の本物の4から2枚を選ぶ組み合わせすべて。ジョーカーは使えない

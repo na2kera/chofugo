@@ -1,7 +1,7 @@
 // その2の固定の場面（design-2 §6.5）と、16種の組み合わせでの不正な操作のテスト。
 import { describe, expect, it } from 'vitest';
 import {
-  ALL_RULE_IDS,
+  STAGE1_RULE_IDS,
   applyAction,
   awaiting,
   createMatch,
@@ -135,7 +135,7 @@ describe('16種の組み合わせで、でたらめな対戦の途中に不正�
     const rng = rngFromSeed([16, 16, 2, 2]);
     let choiceSeen = 0;
     for (let m = 0; m < 12; m++) {
-      let rules = (m % 3 === 0 ? [...ALL_RULE_IDS] : ALL_RULE_IDS.filter(() => nextInt(rng, 2) === 1)) as RuleId[];
+      let rules = (m % 3 === 0 ? [...STAGE1_RULE_IDS] : STAGE1_RULE_IDS.filter(() => nextInt(rng, 2) === 1)) as RuleId[];
       if (!rules.includes('flush_on_8')) rules = rules.filter((r) => r !== 'block_flush_with_4');
       const created = createMatch(cfg(rules, 5), [m + 1, 7, 7, 7]);
       if (!created.ok) throw new Error(created.error.message);

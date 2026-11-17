@@ -29,6 +29,8 @@ export type RuleCtx = {
   isActive(seat: SeatId): boolean;
 };
 
+export type ChoiceKind = 'give' | 'discard' | 'salvage' | 'trade' | 'call';
+
 export type RuleModule = {
   id: RuleId;
   /** 前提のルール。 */
@@ -49,8 +51,12 @@ export type RuleModule = {
   openingCard?(ctx: RuleCtx): CardId | null;
   /** 最初の親の決め方を変えるルール: gameStart の出来事に載せる名前。 */
   leaderRule?: LeaderRule;
-  /** 手札から選ぶ効果（handChoice）を持つルール: 選んだカードの行き先。give = 次の人へ渡す、discard = 捨て札へ。 */
-  choiceTarget?: 'give' | 'discard';
+  /**
+   * 選択の効果（handChoice）を持つルール: 選択の種類。
+   * give = 次の人へ渡す（7渡し）、discard = 捨て札へ（10捨て）、salvage = 捨て札と交換（銀河鉄道）、
+   * trade = 相手と交換（闇市）、call = 数字を宣言して全員が捨てる（Q ボンバー）。
+   */
+  choiceKind?: ChoiceKind;
   /** 場を流すかもしれない手か（8切りの8、砂嵐）。特権のスキップを付けられない手の判定に使う（design-3 §2.4）。 */
   mayFlush?(ctx: RuleCtx, play: Play): boolean;
   /** 出したあとの効果（8切り、革命、J バック、縛りの成立、返しの一周の開始）。 */

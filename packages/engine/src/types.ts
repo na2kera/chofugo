@@ -11,7 +11,7 @@ export const SEAT_COUNT = 4;
 /** 1ゲームの順位（1 = 大富豪、2 = 富豪、3 = 貧民、4 = 大貧民）。カードの Rank とは別。 */
 export type Place = 1 | 2 | 3 | 4;
 
-/** 第1段階の16種（decisions §6.0）。 */
+/** すべてのルール（24種）。前の16個が第1段階（decisions §6.0）、後ろの8個が第2段階（decisions §15）。前の16個の並びは変えない。 */
 export const ALL_RULE_IDS = [
   'flush_on_8',
   'block_flush_with_4',
@@ -29,10 +29,25 @@ export const ALL_RULE_IDS = [
   'reverse_order_on_9',
   'discard_on_10',
   'skip_on_k',
+  // 第2段階（design-4 §1 の並び）
+  'color_lock_on_5',
+  'cancel_reverse_on_6',
+  'triple6_revolution',
+  'triple4_purge',
+  'triple9_salvage',
+  'triple_a_trade',
+  'call_discard_on_q',
+  'quad2_instant_win',
 ] as const;
 export type RuleId = (typeof ALL_RULE_IDS)[number];
 
-/** 実装済みのルール（その2で16種すべて）。 */
+/** 第1段階の16種（その2・その3までの記録とテストが使う）。 */
+export const STAGE1_RULE_IDS: readonly RuleId[] = ALL_RULE_IDS.slice(0, 16);
+
+/** 第2段階の8種（design-4 §1）。 */
+export const STAGE2_RULE_IDS: readonly RuleId[] = ALL_RULE_IDS.slice(16);
+
+/** 実装済みのルール（第2段階で24種すべて）。 */
 export const IMPLEMENTED_RULE_IDS: readonly RuleId[] = ALL_RULE_IDS;
 
 /** 大富豪モードで選べるルール（定番8種、decisions §7。その1と同じ並び）。 */
@@ -47,7 +62,7 @@ export const DAIFUGO_MODE_RULE_IDS: readonly RuleId[] = [
   'dethrone',
 ];
 
-/** カスタムモードで選べるルール（第1段階の16種、decisions §7）。 */
+/** カスタムモードで選べるルール（24種、decisions §15.10）。 */
 export const CUSTOM_MODE_RULE_IDS: readonly RuleId[] = ALL_RULE_IDS;
 
 /** 大富豪モードの最初の状態（おすすめ設定、decisions §7）。 */
@@ -60,6 +75,12 @@ export const DAIFUGO_MODE_DEFAULT_RULES: readonly RuleId[] = [
 ];
 
 export type GameCount = 5 | 10 | null; // null = 無制限
+
+/** カードの色（5色縛り）。赤 = ハート・ダイヤ、黒 = スペード・クラブ。 */
+export type Color = 'red' | 'black';
+
+/** Q ボンバーで宣言できるもの（3〜2 の数字とジョーカー）。 */
+export type CallRank = Rank | 'joker';
 
 // ---------- 特権（その3、design-3 §2.1） ----------
 
@@ -129,13 +150,14 @@ export type ViolationKind =
   | 'sequenceLock' // 激縛り
   | 'openingCard' // ダイヤの3スタートの義務
   | 'passed' // パス済み
-  | 'ban'; // 独裁で封じられた数字（その3）
+  | 'ban' // 独裁で封じられた数字（その3）
+  | 'colorLock'; // 5色縛り（第2段階）
 
 export type Violation = { kind: ViolationKind };
 
 // ---------- 待ち ----------
 
-/** choice = 7渡し・10捨ての「手札から選ぶ」待ち。abilitySelect = 特権の選択（その3）。 */
+/** choice = 7渡し・10捨て・銀河鉄道・闇市・Q ボンバーの選択の待ち。abilitySelect = 特権の選択（その3）。 */
 export type AwaitKind = 'turn' | 'respond' | 'exchangeGive' | 'choice' | 'abilitySelect';
 export type AwaitTimer = 'turn' | 'respond' | 'choice' | 'exchange' | 'ability';
 
@@ -152,8 +174,10 @@ export type Awaiting = {
 
 /** 1手で起きる効果。決まった順に1つずつ処理する（design §3.7、§8.1、design-2 §2.2）。 */
 export type Effect =
-  | { type: 'toggleRevolution' }
-  | { type: 'setTempReverse'; active: boolean }
+  /** rule = 革命を起こした役（オーメン。出来事に載せる）。 */
+  | { type: 'toggleRevolution'; rule?: RuleId }
+  /** rule = J バックを解除したルール（6戻し。出来事に載せる）。 */
+  | { type: 'setTempReverse'; active: boolean; rule?: RuleId }
   | { type: 'setSuitLock'; suits: Suit[] }
   | { type: 'clearSuitLock' }
   /** 激縛りの成立と、連番の更新（rank はいま場のいちばん上の手の数字）。 */
@@ -163,8 +187,15 @@ export type Effect =
   | { type: 'setOrderReverse'; active: boolean }
   /** ダイヤの3の義務を外す。 */
   | { type: 'clearOpening' }
-  /** 7渡し・10捨て（選択の待ちを作る）。 */
+  /** 5色縛りの成立と解除。 */
+  | { type: 'setColorLock'; color: Color }
+  | { type: 'clearColorLock' }
+  /** 7渡し・10捨て・銀河鉄道・闇市・Q ボンバー（選択の待ちを作る）。 */
   | { type: 'handChoice'; rule: RuleId; max: number }
+  /** DEATH（出した人以外の全員が、いちばん強いカードを1枚捨てる）。 */
+  | { type: 'purge'; rule: RuleId }
+  /** 大革命（出した人がその場で上がる）。 */
+  | { type: 'instantWin'; rule: RuleId }
   /** 上がりの判定（中心の処理が入れる印）。foul は出す直前に判定した反則上がりか。 */
   | { type: 'finishCheck'; foul: boolean }
   | { type: 'returnRound'; rule: RuleId }
@@ -188,14 +219,14 @@ export type ReturnRoundPending = {
   rest: Effect[];
 };
 
-/** 7渡し・10捨ての選択の途中（再開に必要な情報）。 */
+/** 選択（7渡し・10捨て・銀河鉄道・闇市・Q ボンバー）の途中（再開に必要な情報）。 */
 export type ChoicePending = {
   type: 'choice';
-  /** give_on_7 か discard_on_10。 */
+  /** 選択の効果を持つルール（モジュールの choiceKind で種類が決まる）。 */
   rule: RuleId;
   /** 選ぶ人（手を出した人）。 */
   seat: SeatId;
-  /** 選べる上限（出した枚数）。 */
+  /** 選べる上限。7渡し・10捨て・Q ボンバーは出した枚数、銀河鉄道・闇市は design-4 §2.4 の値。 */
   max: number;
   /** 7渡しの相手。10捨ては null。 */
   to: SeatId | null;
@@ -255,6 +286,8 @@ export type GameState = {
   seqLock: { suits: Suit[]; rank: Rank } | null;
   /** 最初の1手に含める義務のあるカード（ダイヤの3）。なければ null。 */
   openingCard: CardId | null;
+  /** 5色縛りの色（第2段階）。場が流れると null。 */
+  colorLock: Color | null;
   pending: Pending | null;
   awaiting: Awaiting[];
   /** 1位が確定した瞬間の席ごとの手札枚数（特権枠の判定用。その1では記録だけ）。 */
@@ -298,7 +331,7 @@ export function isAwaitPhase(phase: MatchPhase): boolean {
 }
 
 export type MatchState = {
-  version: 3;
+  version: 4;
   matchId: string;
   config: MatchConfig;
   rng: RngState;
@@ -339,8 +372,11 @@ export type Action =
       cards: CardId[] | null;
     }
   | { type: 'exchangeGive'; seat: SeatId; awaitId: number; cards: CardId[] }
-  /** 7渡し・10捨てで選ぶ。空の配列 = 渡さない・捨てない。 */
-  | { type: 'choose'; seat: SeatId; awaitId: number; cards: CardId[] }
+  /**
+   * 選択の待ちで選ぶ。空の配列 = 渡さない・捨てない・交換しない・使わない。
+   * target は闇市の相手、ranks は Q ボンバーの宣言（Q ボンバーでは cards は空）。
+   */
+  | { type: 'choose'; seat: SeatId; awaitId: number; cards: CardId[]; target?: SeatId; ranks?: CallRank[] }
   /** 特権の選択（confirm: false は途中の保存。待ちは同じ番号のまま残る）。 */
   | { type: 'selectAbilities'; seat: SeatId; awaitId: number; abilities: AbilityId[]; confirm: boolean }
   /** 特権を使う（スキップ以外）。 */
@@ -423,8 +459,12 @@ export type GameEventBody =
   | { type: 'exchangeDone' }
   | { type: 'play'; seat: SeatId; play: Play; foul: boolean }
   | { type: 'pass'; seat: SeatId }
-  | { type: 'revolution'; active: boolean }
-  | { type: 'tempReverse'; active: boolean }
+  /** rule は役（オーメン）で起きたときだけ付く。 */
+  | { type: 'revolution'; active: boolean; rule?: RuleId }
+  /** rule は 6戻しで解除したときだけ付く。 */
+  | { type: 'tempReverse'; active: boolean; rule?: RuleId }
+  /** 5色縛りの成立。 */
+  | { type: 'colorLock'; color: Color }
   | { type: 'suitLock'; suits: Suit[] }
   | { type: 'returnRoundStart'; rule: RuleId; source: SeatId; participants: SeatId[] }
   /** toDiscard: 返したカードを場ではなく捨て札に置いた（4止め）。スペ3返しには付けない。 */
@@ -442,8 +482,18 @@ export type GameEventBody =
   | { type: 'give'; from: SeatId; to: SeatId; cards: CardId[] }
   /** 10捨て。全員に見える。 */
   | { type: 'discard'; seat: SeatId; rule: RuleId; cards: CardId[] }
-  /** 渡さない・捨てない。 */
+  /** 渡さない・捨てない・交換しない・使わない・宣言しない。 */
   | { type: 'choiceSkip'; seat: SeatId; rule: RuleId }
+  /** DEATH。全員に見える。discards は出した人から見て進行方向の順。 */
+  | { type: 'purge'; by: SeatId; discards: { seat: SeatId; card: CardId }[] }
+  /** 銀河鉄道。put = 捨て札に置いたカード、took = 捨て札から受け取ったカード。全員に見える。 */
+  | { type: 'salvage'; seat: SeatId; put: CardId[]; took: CardId[] }
+  /** 闇市。given（from が渡した）・taken（from が受け取った）は当事者だけ（eventsFor で落とす）。 */
+  | { type: 'trade'; from: SeatId; to: SeatId; given: CardId[]; taken: CardId[] }
+  /** Q ボンバー。discards は1枚以上捨てた席だけ（出した人から進行方向の順）。全員に見える。 */
+  | { type: 'callDiscard'; seat: SeatId; ranks: CallRank[]; discards: { seat: SeatId; cards: CardId[] }[] }
+  /** 大革命。discarded = 捨て札に移した残りの手札。 */
+  | { type: 'instantWin'; seat: SeatId; discarded: CardId[] }
   /** K スキップで飛ばされた席。 */
   | { type: 'skipped'; by: SeatId; seats: SeatId[] }
   /** 特権の選択の開始（その3）。 */
@@ -467,12 +517,17 @@ export type GameEventBody =
 export type GameEvent = EventBase & GameEventBody;
 
 export type VisibleEventBody =
-  | Exclude<GameEventBody, { type: 'deal' } | { type: 'exchange' } | { type: 'give' } | { type: 'abilitiesChosen' }>
+  | Exclude<
+      GameEventBody,
+      { type: 'deal' } | { type: 'exchange' } | { type: 'give' } | { type: 'abilitiesChosen' } | { type: 'trade' }
+    >
   | { type: 'deal'; counts: number[]; hand: CardId[] }
   /** abilities は本人だけ。ほかの席には null。 */
   | { type: 'abilitiesChosen'; seat: SeatId; count: number; abilities: AbilityId[] | null }
   | { type: 'exchange'; from: SeatId; to: SeatId; count: number; cards: CardId[] | null }
-  | { type: 'give'; from: SeatId; to: SeatId; count: number; cards: CardId[] | null };
+  | { type: 'give'; from: SeatId; to: SeatId; count: number; cards: CardId[] | null }
+  /** 闇市。given・taken は当事者の2人だけ。ほかの席には null。 */
+  | { type: 'trade'; from: SeatId; to: SeatId; count: number; given: CardId[] | null; taken: CardId[] | null };
 
 export type VisibleEvent = EventBase & VisibleEventBody;
 
@@ -515,7 +570,15 @@ export type MyAwaiting =
       candidates: CardId[];
       choose: number;
     }
-  | { awaitId: number; kind: 'choice'; rule: RuleId; max: number; to: SeatId | null };
+  | {
+      awaitId: number;
+      kind: 'choice';
+      rule: RuleId;
+      max: number;
+      to: SeatId | null;
+      /** 選べる相手（闇市だけ。自分以外の残っている席、パス済みを含む）。 */
+      targets?: SeatId[];
+    };
 
 export type PublicExchangePair = {
   lower: SeatId;
@@ -541,7 +604,9 @@ export type GameView = {
   suitLock: Suit[] | null;
   seqLock: { suits: Suit[]; rank: Rank } | null;
   openingCard: CardId | null;
-  /** 7渡し・10捨ての選択中。 */
+  /** 5色縛りの色（全員）。 */
+  colorLock: Color | null;
+  /** 選択（7渡し・10捨て・銀河鉄道・闇市・Q ボンバー）の最中。 */
   choice: { rule: RuleId; seat: SeatId; to: SeatId | null } | null;
   returnRound: { rule: RuleId; source: SeatId; asking: SeatId | null } | null;
   exchange: PublicExchangePair[] | null;

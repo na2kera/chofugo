@@ -2,6 +2,14 @@
 
 import type { RuleId } from '../types.ts';
 import { blockFlushWith4 } from './block_flush_with_4.ts';
+import { callDiscardOnQ } from './call_discard_on_q.ts';
+import { cancelReverseOn6 } from './cancel_reverse_on_6.ts';
+import { colorLockOn5 } from './color_lock_on_5.ts';
+import { quad2InstantWin } from './quad2_instant_win.ts';
+import { triple4Purge } from './triple4_purge.ts';
+import { triple6Revolution } from './triple6_revolution.ts';
+import { triple9Salvage } from './triple9_salvage.ts';
+import { tripleATrade } from './triple_a_trade.ts';
 import { dethrone } from './dethrone.ts';
 import { diamond3Start } from './diamond3_start.ts';
 import { discardOn10 } from './discard_on_10.ts';
@@ -19,12 +27,13 @@ import { tempReverseOnJ } from './temp_reverse_on_j.ts';
 import { triple3Trump } from './triple3_trump.ts';
 import type { RuleModule } from './types.ts';
 
-export type { RuleCtx, RuleModule } from './types.ts';
+export type { ChoiceKind, RuleCtx, RuleModule } from './types.ts';
 
 /**
  * 実装済みのモジュール（登録順 = 処理順）。効果は優先順で並べ直すので、登録順が効くのは同じ優先順の効果と、
  * 解釈の補い（refinePlay：マーク縛り → 激縛り）、出せない理由の先に見つかったものだけ。
  * その2の8種は、その1の8種の後ろに足した（定番8種だけの試合の動きを変えないため）。
+ * 第2段階の8種は、16種の後ろに design-4 §1 の並びで足した（16種だけの試合の動きを変えないため）。
  */
 export const RULE_MODULES: readonly RuleModule[] = [
   revolution,
@@ -43,6 +52,14 @@ export const RULE_MODULES: readonly RuleModule[] = [
   reverseOrderOn9,
   discardOn10,
   skipOnK,
+  colorLockOn5,
+  cancelReverseOn6,
+  triple6Revolution,
+  triple4Purge,
+  triple9Salvage,
+  tripleATrade,
+  callDiscardOnQ,
+  quad2InstantWin,
 ];
 
 export function findModule(id: RuleId): RuleModule | null {

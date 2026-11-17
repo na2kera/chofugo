@@ -29,8 +29,8 @@ export const triple3Trump: RuleModule = {
     return out;
   },
   playIgnores(_ctx, play) {
-    // 場の種類・枚数・強さ、マーク縛り、激縛りを無視する。ダイヤの3の義務（とその3の独裁）は守る
-    return isSandstorm(play) ? ['fieldShape', 'fieldSize', 'notStronger', 'suitLock', 'sequenceLock'] : [];
+    // 場の種類・枚数・強さ、マーク縛り、激縛り、色縛り（第2段階）を無視する。ダイヤの3の義務（とその3の独裁）は守る
+    return isSandstorm(play) ? ['fieldShape', 'fieldSize', 'notStronger', 'suitLock', 'sequenceLock', 'colorLock'] : [];
   },
   afterPlay(_ctx, played) {
     if (played.via !== 'turn' || !isSandstorm(played.play)) return [];

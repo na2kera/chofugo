@@ -4,7 +4,7 @@ import type { RuleModule } from './types.ts';
 
 export const discardOn10: RuleModule = {
   id: 'discard_on_10',
-  choiceTarget: 'discard',
+  choiceKind: 'discard',
   afterPlay(_ctx, played) {
     const p = played.play;
     if (played.via !== 'turn' || p.shape !== 'group' || p.rank !== 10) return [];

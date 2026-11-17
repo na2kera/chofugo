@@ -6,4 +6,4 @@ export * from './types.ts';
 export { createMatch, applyAction, awaiting, validateConfig } from './match.ts';
 export { viewFor, eventsFor, legalPlays } from './view.ts';
 export { RULE_MODULES } from './rules/index.ts';
-export type { RuleCtx, RuleModule } from './rules/index.ts';
+export type { ChoiceKind, RuleCtx, RuleModule } from './rules/index.ts';

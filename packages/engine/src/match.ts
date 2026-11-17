@@ -1,6 +1,6 @@
 // 試合の作成と操作の適用（design §3.2、§3.3）。
 
-import { STANDARD_DECK, sortCardIds, type CardId } from './cards.ts';
+import { RANKS, STANDARD_DECK, sortCardIds, type CardId } from './cards.ts';
 import { deepClone } from './clone.ts';
 import { decideAuto } from './auto.ts';
 import { canSkipPlay, doSelectAbilities, doUseAbility, prunePeek } from './abilities.ts';
@@ -21,6 +21,7 @@ import {
   startTurn,
   topPlay,
   computeStandings,
+  isActive,
   type Ctx,
 } from './game.ts';
 import { findModule } from './rules/index.ts';
@@ -34,6 +35,7 @@ import {
   type ActionErrorCode,
   type ApplyResult,
   type Awaiting,
+  type CallRank,
   type ConfigError,
   type CreateMatchResult,
   type GameEvent,
@@ -94,7 +96,7 @@ export function createMatch(config: MatchConfig, seed: Seed): CreateMatchResult 
     abilities: config.abilities === true,
   };
   const state: MatchState = {
-    version: 3,
+    version: 4,
     matchId: cfg.matchId,
     config: cfg,
     rng: rngFromSeed(seed),
@@ -149,6 +151,7 @@ function startGame(c: Ctx): void {
     suitLock: null,
     seqLock: null,
     openingCard: null,
+    colorLock: null,
     pending: null,
     awaiting: [],
     firstPlaceHandCounts: null,
@@ -186,6 +189,55 @@ function isCardList(v: unknown): v is CardId[] {
     if (!(i in v) || typeof v[i] !== 'string') return false;
   }
   return true;
+}
+
+/** Q ボンバーの宣言の列の形か（配列で穴がない。長さは宣言できるものの数まで）。中身は chooseError で確かめる。 */
+function isRankList(v: unknown): v is unknown[] {
+  if (!Array.isArray(v) || v.length > RANKS.length + 1) return false;
+  for (let i = 0; i < v.length; i++) if (!(i in v)) return false;
+  return true;
+}
+
+function isCallRank(v: unknown): v is CallRank {
+  return v === 'joker' || (typeof v === 'number' && (RANKS as readonly number[]).includes(v));
+}
+
+/** choose の検査（design-4 §2.5）。選択の種類ごとに cards・target・ranks を確かめる。 */
+function chooseError(c: Ctx, seat: SeatId, a: Action & { type: 'choose' }): ActionError | null {
+  const g = gameOf(c);
+  const p = g.pending;
+  if (p === null || p.type !== 'choice') return err('wrongAwaitKind', 'nothing to choose');
+  if (!isCardList(a.cards)) return err('malformed', 'cards must be a list');
+  if (a.target !== undefined && !isSeat(a.target)) return err('malformed', 'target must be 0..3');
+  if (a.ranks !== undefined && !isRankList(a.ranks)) return err('malformed', 'ranks must be a list');
+  const kind = findModule(p.rule)?.choiceKind;
+  const hand = g.hands[seat] ?? [];
+  if (kind === 'call') {
+    if (a.cards.length > 0) return err('invalidChoice', 'cards must be empty for a call');
+    if (a.target !== undefined) return err('invalidChoice', 'target is not used for a call');
+    const ranks = a.ranks ?? [];
+    if (!ranks.every(isCallRank)) return err('invalidChoice', 'ranks must be 3..15 or joker');
+    if (new Set(ranks).size !== ranks.length) return err('invalidChoice', 'duplicate ranks');
+    if (ranks.length > p.max) return err('invalidChoice', `at most ${p.max} ranks`);
+    return null;
+  }
+  if (a.ranks !== undefined) return err('invalidChoice', 'ranks are used only for a call');
+  if (new Set(a.cards).size !== a.cards.length) return err('invalidChoice', 'duplicate cards');
+  if (kind === 'trade') {
+    // 使わない（cards が空）ときは、target があっても使わない
+    if (a.cards.length === 0) return null;
+    if (a.target === undefined) return err('invalidChoice', 'target is required');
+    if (a.target === seat || !isActive(g, a.target)) return err('invalidChoice', 'this seat cannot be targeted');
+    if (!a.cards.every((id) => hand.includes(id))) return err('cardNotInHand', 'card not in hand');
+    const need = Math.min(p.max, hand.length, (g.hands[a.target] ?? []).length);
+    if (a.cards.length !== need) return err('invalidChoice', `exactly ${need} cards`);
+    return null;
+  }
+  // 7渡し・10捨て・銀河鉄道（7渡し・10捨ては今までと同じ順で確かめる）
+  if (a.cards.length > p.max) return err('invalidChoice', `at most ${p.max} cards`);
+  if (!a.cards.every((id) => hand.includes(id))) return err('cardNotInHand', 'card not in hand');
+  if (a.target !== undefined) return err('invalidChoice', 'target is used only for a trade');
+  return null;
 }
 
 /** いま待っている操作（並行して複数あり得る）。 */
@@ -298,14 +350,12 @@ function dispatch(c: Ctx, a: Action, fromAuto: boolean): ActionError | null {
     case 'choose': {
       const w = checkAwait(c, a.seat, a.awaitId, 'choice');
       if (isError(w)) return w;
-      const p = gameOf(c).pending;
-      if (p === null || p.type !== 'choice') return err('wrongAwaitKind', 'nothing to choose');
-      if (!isCardList(a.cards)) return err('malformed', 'cards must be a list');
-      if (new Set(a.cards).size !== a.cards.length) return err('invalidChoice', 'duplicate cards');
-      if (a.cards.length > p.max) return err('invalidChoice', `at most ${p.max} cards`);
-      const hand = gameOf(c).hands[w.seat] ?? [];
-      if (!a.cards.every((id) => hand.includes(id))) return err('cardNotInHand', 'card not in hand');
-      doChoose(c, a.cards);
+      const e = chooseError(c, w.seat, a);
+      if (e !== null) return e;
+      const opts: { target?: SeatId; ranks?: CallRank[] } = {};
+      if (a.target !== undefined && a.cards.length > 0) opts.target = a.target;
+      if (a.ranks !== undefined) opts.ranks = a.ranks;
+      doChoose(c, a.cards, opts);
       return null;
     }
     case 'selectAbilities': {

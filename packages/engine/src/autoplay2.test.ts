@@ -3,7 +3,7 @@
 // 毎手の検査はその1と同じ（helpers.ts の checkInvariants：54枚、待たれている席に選べる操作がある、手数の上限、順位と得点）。
 // (b) 定番8種の256通りは autoplay.test.ts（列挙の元を DAIFUGO_MODE_RULE_IDS に固定した）。
 import { describe, expect, it } from 'vitest';
-import { ALL_RULE_IDS, RULE_MODULES, type GameEvent, type RuleId } from './index.ts';
+import { STAGE1_RULE_IDS, RULE_MODULES, type GameEvent, type RuleId } from './index.ts';
 import { nextInt, rngFromSeed } from './rng.ts';
 import { cfg, runMatch, type Policy, type RunStats } from './test/helpers.ts';
 
@@ -38,7 +38,7 @@ describe('自動対戦（16種すべて ON）', () => {
       for (let i = 0; i < 25; i++) {
         const seed: [number, number, number, number] = [i * 104729 + 3, 16, 0xc0ffee, ['cpu', 'random', 'timeout'].indexOf(policy) + 1];
         try {
-          const { state, stats } = runMatch(cfg([...ALL_RULE_IDS], 5), seed, policy, { keepEvents: true });
+          const { state, stats } = runMatch(cfg([...STAGE1_RULE_IDS], 5), seed, policy, { keepEvents: true });
           expect(state.phase).toBe('matchResult');
           collect(seen, stats);
         } catch (e) {
@@ -70,7 +70,7 @@ describe('自動対戦（前提を満たすランダムな組み合わせ）', (
     const seen = newSeen();
     for (let n = 0; n < 300; n++) {
       // 種からルールを決める。前提を満たさないルール（8切りなしの4止め）は外す
-      let rules = ALL_RULE_IDS.filter(() => nextInt(rng, 2) === 1) as RuleId[];
+      let rules = STAGE1_RULE_IDS.filter(() => nextInt(rng, 2) === 1) as RuleId[];
       rules = rules.filter((r) => findRequirement(r).every((req) => rules.includes(req)));
       const policy: Policy = n % 2 === 0 ? 'cpu' : 'random';
       const seed: [number, number, number, number] = [n + 1, nextInt(rng, 1 << 30), 3, 300];

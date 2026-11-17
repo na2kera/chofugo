@@ -6,6 +6,8 @@ import {
   CUSTOM_MODE_RULE_IDS,
   DAIFUGO_MODE_RULE_IDS,
   IMPLEMENTED_RULE_IDS,
+  STAGE1_RULE_IDS,
+  STAGE2_RULE_IDS,
   createMatch,
   type RuleId,
 } from './index.ts';
@@ -19,13 +21,22 @@ describe('createMatch の設定の検証', () => {
     }
   });
 
-  // その2で書き換えた（その1では「その2の8種は未実装としてエラーになる」。design-2 §6.4）
-  it('16種すべてを受け付け、前提を満たさない組み合わせ（4止めだけ ON）は missingRequirement', () => {
+  // その2で書き換えた（その1では「その2の8種は未実装としてエラーになる」。design-2 §6.4）。第2段階で24種にした（design-4 §2.8）
+  it('24種すべてを受け付け、前提を満たさない組み合わせ（4止めだけ ON、6戻しだけ ON）は missingRequirement', () => {
     expect([...IMPLEMENTED_RULE_IDS]).toEqual([...ALL_RULE_IDS]);
+    expect(ALL_RULE_IDS).toHaveLength(24);
+    expect([...STAGE1_RULE_IDS, ...STAGE2_RULE_IDS]).toEqual([...ALL_RULE_IDS]);
+    expect(STAGE1_RULE_IDS).toHaveLength(16);
+    // 第1段階の16種の並びは変えていない
+    expect(STAGE1_RULE_IDS.slice(-1)).toEqual(['skip_on_k']);
     for (const id of ALL_RULE_IDS) {
-      const r = createMatch(cfg(['flush_on_8', id].filter((x, i, a) => a.indexOf(x) === i) as RuleId[]), [1, 2, 3, 4]);
+      // 前提のルール（8切り、J バック）を足して作る
+      const r = createMatch(cfg(['flush_on_8', 'temp_reverse_on_j', id].filter((x, i, a) => a.indexOf(x) === i) as RuleId[]), [1, 2, 3, 4]);
       expect(r.ok, id).toBe(true);
     }
+    const r6 = createMatch(cfg(['cancel_reverse_on_6', 'revolution']), [1, 2, 3, 4]);
+    expect(r6.ok).toBe(false);
+    if (!r6.ok) expect(r6.error).toMatchObject({ code: 'missingRequirement', rule: 'cancel_reverse_on_6' });
     expect(createMatch(cfg([...ALL_RULE_IDS]), [1, 2, 3, 4]).ok).toBe(true);
     const r = createMatch(cfg(['block_flush_with_4']), [1, 2, 3, 4]);
     expect(r.ok).toBe(false);

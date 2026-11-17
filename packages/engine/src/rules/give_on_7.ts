@@ -4,7 +4,7 @@ import type { RuleModule } from './types.ts';
 
 export const giveOn7: RuleModule = {
   id: 'give_on_7',
-  choiceTarget: 'give',
+  choiceKind: 'give',
   afterPlay(_ctx, played) {
     const p = played.play;
     // 数字の効果は play.rank で判定する（ジョーカーを混ぜた組は発動、ジョーカーだけの手は発動しない。§6.0.1）

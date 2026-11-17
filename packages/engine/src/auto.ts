@@ -1,11 +1,13 @@
 // auto 操作の決め方（timeout: decisions §8、cpu: design §3.6・decisions §14.9 を差し替えた §14.14）。
 
-import { cardOf, compareCardIds, rankStrength, type CardId } from './cards.ts';
+import { cardOf, compareCardIds, RANKS, rankStrength, type CardId, type Rank } from './cards.ts';
 import { cpuAbilityAction, cpuWantsSkip, decideAbilitySelect } from './abilities.ts';
 import { autoLowerGive, autoUpperGive, exchangeTaskFor } from './exchange.ts';
-import { gameOf, isReversed, legalReturnPlays, legalTurnPlays, topPlay, type Ctx } from './game.ts';
-import { weakestStrength } from './hand.ts';
-import type { Action, Awaiting, LegalPlay } from './types.ts';
+import { gameOf, isActive, isReversed, legalReturnPlays, legalTurnPlays, topPlay, type Ctx } from './game.ts';
+import { cardStrength, weakestStrength } from './hand.ts';
+import { findModule } from './rules/index.ts';
+import { nextInt } from './rng.ts';
+import { SEATS, type Action, type Awaiting, type LegalPlay, type SeatId } from './types.ts';
 
 /** CPU の並べ方（§14.14 で差し替えた §14.9）。先頭がいちばん選ばれやすい。 */
 export function sortForCpu(plays: readonly LegalPlay[], reversed: boolean): LegalPlay[] {
@@ -37,16 +39,39 @@ function playAction(w: Awaiting, lp: LegalPlay, withSkip = false): Action {
   return a;
 }
 
-/** 7渡し・10捨ての CPU: その時点の向きでいちばん弱いカードから max 枚まで。ジョーカーは最後（design-2 §2.6）。 */
+/** 7渡し・10捨て・銀河鉄道・闇市の CPU: その時点の向きでいちばん弱いカードから max 枚まで。ジョーカーは最後（design-2 §2.6）。 */
 export function cpuChoice(hand: readonly CardId[], max: number, reversed: boolean): CardId[] {
-  const strength = (id: CardId): number => {
-    const card = cardOf(id);
-    return card === null || card.kind === 'joker' ? Infinity : rankStrength(card.rank, reversed);
-  };
   return hand
     .slice()
-    .sort((a, b) => strength(a) - strength(b) || compareCardIds(a, b))
+    .sort((a, b) => cardStrength(a, reversed) - cardStrength(b, reversed) || compareCardIds(a, b))
     .slice(0, max);
+}
+
+/** 闇市で選べる相手: 自分以外の残っている席（パス済みを含む。design-4 §2.4）。 */
+export function tradeTargets(c: Ctx, seat: SeatId): SeatId[] {
+  const g = gameOf(c);
+  return SEATS.filter((s) => s !== seat && isActive(g, s));
+}
+
+/**
+ * Q ボンバーの CPU（decisions §15.8、§19.3）: 自分の手札でいちばん枚数の多い数字を1つ。同じ枚数なら、その時点の向きで弱い数字。
+ * ジョーカーは数えない。数字のカードがなければ null（宣言しない）。
+ */
+export function cpuCallRank(hand: readonly CardId[], reversed: boolean): Rank | null {
+  let best: Rank | null = null;
+  let bestCount = 0;
+  for (const r of RANKS) {
+    const n = hand.filter((id) => {
+      const card = cardOf(id);
+      return card !== null && card.kind === 'normal' && card.rank === r;
+    }).length;
+    if (n === 0) continue;
+    if (n > bestCount || (n === bestCount && best !== null && rankStrength(r, reversed) < rankStrength(best, reversed))) {
+      best = r;
+      bestCount = n;
+    }
+  }
+  return best;
 }
 
 /** 待ち w に対して、決まりどおりの操作を作る（乱数を使う場合は c.s.rng を進める）。 */
@@ -87,9 +112,25 @@ export function decideAuto(c: Ctx, w: Awaiting, policy: 'timeout' | 'cpu'): Acti
   if (w.kind === 'choice') {
     const p = g.pending;
     if (p === null || p.type !== 'choice') return null;
-    // 時間切れは渡さない・捨てない（§8）
-    const cards = policy === 'cpu' ? cpuChoice(g.hands[w.seat] ?? [], p.max, isReversed(g)) : [];
-    return { type: 'choose', seat: w.seat, awaitId: w.id, cards };
+    const base = { type: 'choose' as const, seat: w.seat, awaitId: w.id };
+    // 時間切れは、どれも何もしない（渡さない・捨てない・交換しない・使わない・宣言しない。§8、design-4 §2.6）
+    if (policy === 'timeout') return { ...base, cards: [] };
+    const hand = g.hands[w.seat] ?? [];
+    const kind = findModule(p.rule)?.choiceKind;
+    if (kind === 'trade') {
+      // 闇市: 相手を乱数で1人選び、いちばん弱いカードを、ちょうどの枚数だけ渡す
+      const targets = tradeTargets(c, w.seat);
+      if (targets.length === 0) return { ...base, cards: [] };
+      const target = targets[nextInt(c.s.rng, targets.length)] as SeatId;
+      const n = Math.min(p.max, hand.length, (g.hands[target] ?? []).length);
+      return { ...base, cards: cpuChoice(hand, n, isReversed(g)), target };
+    }
+    if (kind === 'call') {
+      const r = cpuCallRank(hand, isReversed(g));
+      return r === null ? { ...base, cards: [] } : { ...base, cards: [], ranks: [r] };
+    }
+    // 7渡し・10捨て・銀河鉄道: いちばん弱いカードから max 枚まで
+    return { ...base, cards: cpuChoice(hand, p.max, isReversed(g)) };
   }
   const task = exchangeTaskFor(c, w.seat);
   if (task === null) return null;

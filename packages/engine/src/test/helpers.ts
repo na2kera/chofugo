@@ -12,6 +12,7 @@ import {
   type AbilityState,
   type Action,
   type CardId,
+  type Color,
   type GameEvent,
   type GameState,
   type MatchConfig,
@@ -20,6 +21,9 @@ import {
   type SeatId,
 } from '../index.ts';
 import { nextInt, rngFromSeed, type RngState } from '../rng.ts';
+import { RANKS } from '../cards.ts';
+import { findModule } from '../rules/index.ts';
+import type { CallRank } from '../types.ts';
 
 const SUIT_OF: Record<string, string> = { S: 'spade', H: 'heart', D: 'diamond', C: 'club' };
 const RANK_OF: Record<string, number> = { J: 11, Q: 12, K: 13, A: 14, '2': 15 };
@@ -62,6 +66,8 @@ export type Setup = {
   gameCount?: 5 | 10 | null;
   orderReversed?: boolean;
   openingCard?: CardId;
+  /** 5色縛りの色（第2段階）。 */
+  colorLock?: Color;
   /** 特権（その3）。holder の特権を確定済みの状態で置く。 */
   abilities?: { holder: SeatId; chosen: AbilityId[]; used?: AbilityId[]; slots?: number };
   /** 試合の設定の abilities（省略時は abilities の指定があれば true）。 */
@@ -87,6 +93,7 @@ export function scene(s: Setup): MatchState {
     suitLock: null,
     seqLock: null,
     openingCard: s.openingCard ?? null,
+    colorLock: s.colorLock ?? null,
     pending: null,
     awaiting: [{ id: 100, seat: s.turn, kind: 'turn', timer: 'turn' }],
     firstPlaceHandCounts: null,
@@ -161,12 +168,12 @@ export class Driver {
     expect(w.kind).toBe('respond');
     return this.apply({ type: 'respond', seat, awaitId: w.id, cards: shorts === null ? null : cs(shorts) });
   }
-  /** 7渡し・10捨てで選ぶ（空文字 = 渡さない・捨てない）。 */
-  choose(seat: SeatId, shorts: string) {
+  /** 選択の待ちで選ぶ（空文字 = 渡さない・捨てない）。extra は闇市の相手と Q ボンバーの宣言（第2段階）。 */
+  choose(seat: SeatId, shorts: string, extra: { target?: SeatId; ranks?: CallRank[] } = {}) {
     const w = this.current();
     expect(w.seat).toBe(seat);
     expect(w.kind).toBe('choice');
-    return this.apply({ type: 'choose', seat, awaitId: w.id, cards: cs(shorts) });
+    return this.apply({ type: 'choose', seat, awaitId: w.id, cards: cs(shorts), ...extra });
   }
   /** いま待たれている人が特権を使う（その3）。 */
   use(seat: SeatId, ability: AbilityId, extra: { target?: SeatId; card?: string; rank?: number } = {}) {
@@ -302,7 +309,29 @@ export function randomAction(s: MatchState, rng: RngState): Action {
   }
   const hand = viewFor(s, w.seat).game?.hand ?? [];
   if (m.kind === 'choice') {
-    // 0〜max 枚をでたらめに選ぶ
+    // 種類は待ちのルールから決める（design-4 §6.5）。7渡し・10捨ては今までと同じ乱数の引き方
+    const kind = findModule(m.rule)?.choiceKind;
+    if (kind === 'trade') {
+      // 闇市: 使わないか、相手を選んでちょうどの枚数
+      const targets = m.targets ?? [];
+      if (targets.length === 0 || nextInt(rng, 3) === 0) return { type: 'choose', seat: w.seat, awaitId: w.id, cards: [] };
+      const target = pick(rng, targets);
+      const theirs = viewFor(s, w.seat).game?.handCounts[target] ?? 0;
+      const n = Math.min(m.max, hand.length, theirs);
+      const h = hand.slice();
+      const chosen: CardId[] = [];
+      for (let i = 0; i < n; i++) chosen.push(...h.splice(nextInt(rng, h.length), 1));
+      return { type: 'choose', seat: w.seat, awaitId: w.id, cards: chosen, target };
+    }
+    if (kind === 'call') {
+      // Q ボンバー: 0〜max 個の数字（cards は空）
+      const all: CallRank[] = [...RANKS, 'joker'];
+      const n = nextInt(rng, m.max + 1);
+      const ranks: CallRank[] = [];
+      for (let i = 0; i < n; i++) ranks.push(...all.splice(nextInt(rng, all.length), 1));
+      return { type: 'choose', seat: w.seat, awaitId: w.id, cards: [], ranks };
+    }
+    // 7渡し・10捨て・銀河鉄道: 0〜max 枚をでたらめに選ぶ
     const h = hand.slice();
     const n = nextInt(rng, Math.min(m.max, h.length) + 1);
     const chosen: CardId[] = [];

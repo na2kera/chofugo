@@ -22,33 +22,14 @@ import {
   type GameEvent,
   type MatchState,
   type RuleId,
+  STAGE1_RULE_IDS,
 } from './index.ts';
 import { nextInt, rngFromSeed, type RngState } from './rng.ts';
 
 type Seed4 = [number, number, number, number];
 
-/**
- * 第1段階の16種（記録を作ったときの並び）。ALL_RULE_IDS は第2段階で24種に増えるので、記録の試合には使わない。
- * TODO(第2段階): types.ts の STAGE1_RULE_IDS に置き換える。
- */
-const STAGE1_16: RuleId[] = [
-  'flush_on_8',
-  'block_flush_with_4',
-  'revolution',
-  'temp_reverse_on_j',
-  'spade3_beats_joker',
-  'suit_lock',
-  'sequence_lock',
-  'runs',
-  'forbidden_finish',
-  'dethrone',
-  'diamond3_start',
-  'triple3_trump',
-  'give_on_7',
-  'reverse_order_on_9',
-  'discard_on_10',
-  'skip_on_k',
-];
+/** 第1段階の16種（記録を作ったときの並び）。ALL_RULE_IDS は第2段階で24種に増えたので、記録の試合には使わない。 */
+const STAGE1_16: RuleId[] = STAGE1_RULE_IDS.slice();
 
 /** 記録する試合の一覧。ここを変えると記録も作り直しになる。 */
 type Combo = { name: string; rules: RuleId[]; abilities?: boolean };

@@ -1,7 +1,7 @@
 // 超富豪モードの特権（decisions §5、§17、design-3 §2.8、§6.8）。
 import { describe, expect, it } from 'vitest';
 import {
-  ALL_RULE_IDS,
+  STAGE1_RULE_IDS,
   applyAction,
   awaiting,
   createMatch,
@@ -118,7 +118,7 @@ describe('特権の枠（§5.1、design-3 §2.2）', () => {
 
 /** 特権ありの試合を、2ゲーム目の特権の選択まで CPU で進める。 */
 function toAbilityPhase(seed: [number, number, number, number] = [5, 6, 7, 8]): { s: MatchState; events: GameEvent[] } {
-  const created = createMatch({ matchId: 'm', rules: [...ALL_RULE_IDS], gameCount: 5, abilities: true }, seed);
+  const created = createMatch({ matchId: 'm', rules: [...STAGE1_RULE_IDS], gameCount: 5, abilities: true }, seed);
   if (!created.ok) throw new Error(created.error.message);
   let s = created.state;
   let events = created.events;
@@ -224,7 +224,7 @@ describe('特権の選択（design-3 §2.3）', () => {
   });
 
   it('1ゲーム目には特権がない', () => {
-    const created = createMatch({ matchId: 'm', rules: [...ALL_RULE_IDS], gameCount: 5, abilities: true }, [1, 2, 3, 4]);
+    const created = createMatch({ matchId: 'm', rules: [...STAGE1_RULE_IDS], gameCount: 5, abilities: true }, [1, 2, 3, 4]);
     if (!created.ok) throw new Error();
     expect(created.state.phase).toBe('play');
     expect(created.state.game!.abilities).toBeNull();
@@ -729,7 +729,7 @@ describe('見える情報（design-3 §2.6、§6.8）', () => {
   it('公開される個数と使用済みの履歴が同じなら、未使用の種類と途中の内容を変えても、第三者の view と出せる手は同じ', () => {
     const base = (chosen: AbilityId[], draft: AbilityId[]) => {
       const s = scene({
-        rules: [...ALL_RULE_IDS],
+        rules: [...STAGE1_RULE_IDS],
         hands: ['S5 S6 S7', 'H3 H8 HK', 'D4 D9', 'C6 C10'],
         turn: 1,
         abilities: { holder: 0, chosen, used: ['ban'] },
@@ -825,7 +825,7 @@ describe('ability のフェーズ（design-3 §6.5）', () => {
     if (!m.ok) expect(m.error.code).toBe('malformed');
     const ok = createMatch({ matchId: 'm', rules: ['dethrone'], gameCount: 5, abilities: true }, [1, 2, 3, 4]);
     expect(ok.ok).toBe(true);
-    if (ok.ok) expect(ok.state.version).toBe(3);
+    if (ok.ok) expect(ok.state.version).toBe(4);
     const off = createMatch({ matchId: 'm', rules: ['flush_on_8'], gameCount: 5 }, [1, 2, 3, 4]);
     if (!off.ok) throw new Error();
     expect(off.state.config.abilities).toBe(false);
@@ -869,7 +869,7 @@ describe('外から来た不正な値（文字列にできない値）', () => {
     e.play(0, 'S7');
     for (const v of [evil, evil2]) check(e.state, { type: 'choose', seat: 0, awaitId: e.current().id, cards: [v] });
     // 交換
-    const created = createMatch({ matchId: 'm', rules: [...ALL_RULE_IDS], gameCount: 5, abilities: true }, [5, 6, 7, 8]);
+    const created = createMatch({ matchId: 'm', rules: [...STAGE1_RULE_IDS], gameCount: 5, abilities: true }, [5, 6, 7, 8]);
     if (!created.ok) throw new Error();
     let x = created.state;
     for (let i = 0; i < 3000 && x.phase !== 'exchange'; i++) {

@@ -21,8 +21,8 @@ export const spade3BeatsJoker: RuleModule = {
     // 返す手段がないジョーカーの1枚出しとして、すぐ場を流す（§2.5）
     return [{ type: 'flush', leader: source, reason: 'jokerUnbeatable' }];
   },
-  // マーク縛り・場の種類と枚数・強さ・自分のパス状態を無視する（§14.7）
-  returnIgnores: ['suitLock', 'fieldShape', 'fieldSize', 'notStronger', 'passed'],
+  // マーク縛り・場の種類と枚数・強さ・自分のパス状態・色縛り（第2段階、§15.2）を無視する（§14.7）
+  returnIgnores: ['suitLock', 'fieldShape', 'fieldSize', 'notStronger', 'passed', 'colorLock'],
   returnOptions(ctx, seat) {
     const hand = ctx.game.hands[seat] ?? [];
     if (!hand.includes(SPADE3)) return [];

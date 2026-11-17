@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ALL_ABILITY_IDS,
-  ALL_RULE_IDS,
+  STAGE1_RULE_IDS,
   applyAction,
   awaiting,
   createMatch,
@@ -20,7 +20,7 @@ import {
 import { nextInt, rngFromSeed } from './rng.ts';
 import { checkInvariants, randomAction, type Policy } from './test/helpers.ts';
 
-const CHOFUGO: MatchConfig = { matchId: 'm-s3', rules: [...ALL_RULE_IDS], gameCount: 10, abilities: true };
+const CHOFUGO: MatchConfig = { matchId: 'm-s3', rules: [...STAGE1_RULE_IDS], gameCount: 10, abilities: true };
 
 type Seen = { abilities: Set<string>; kinds: Set<string>; marks: Set<string> };
 

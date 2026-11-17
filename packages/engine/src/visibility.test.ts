@@ -5,6 +5,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   ALL_RULE_IDS,
+  RULE_MODULES,
+  STAGE1_RULE_IDS,
   applyAction,
   awaiting,
   createMatch,
@@ -33,6 +35,12 @@ function learn(known: Set<string>, events: readonly GameEvent[], viewer: SeatId)
     if (e.type === 'play' || e.type === 'respond') e.play.cards.forEach((x) => known.add(x));
     if (e.type === 'discard') e.cards.forEach((x) => known.add(x));
     if (e.type === 'dethrone') e.discarded.forEach((x) => known.add(x));
+    // 第2段階: 捨て札に入ったカード（DEATH・銀河鉄道・Q ボンバー・大革命）と、闇市の中身（当事者にだけ届く）
+    if (e.type === 'purge') e.discards.forEach((x) => known.add(x.card));
+    if (e.type === 'salvage') [...e.put, ...e.took].forEach((x) => known.add(x));
+    if (e.type === 'callDiscard') e.discards.forEach((x) => x.cards.forEach((y) => known.add(y)));
+    if (e.type === 'instantWin') e.discarded.forEach((x) => known.add(x));
+    if (e.type === 'trade') [...(e.given ?? []), ...(e.taken ?? [])].forEach((x) => known.add(x));
     // その3: 透視で見た・見られたカード、強奪で動いたカード（当事者にだけ中身が届く）
     if (e.type === 'ability') {
       e.cards?.forEach((x) => known.add(x));
@@ -98,7 +106,7 @@ describe('見える情報', () => {
     let giveSeen = 0;
     for (let m = 0; m < 40; m++) {
       // 16種から選ぶ（4の倍数の回は16種すべて）。前提を満たさない4止めは外す
-      let rules = (m % 4 === 0 ? [...ALL_RULE_IDS] : ALL_RULE_IDS.filter((_, i) => (m + i) % 3 !== 0)) as RuleId[];
+      let rules = (m % 4 === 0 ? [...STAGE1_RULE_IDS] : STAGE1_RULE_IDS.filter((_, i) => (m + i) % 3 !== 0)) as RuleId[];
       if (!rules.includes('flush_on_8')) rules = rules.filter((r) => r !== 'block_flush_with_4');
       const created = createMatch(cfg(rules, 5), [m + 11, 5, 8, 13]);
       if (!created.ok) throw new Error(created.error.message);
@@ -197,7 +205,7 @@ describe('見える情報（超富豪モード：特権あり、design-3 §2.8�
     let checked = 0;
     let abilityChecked = 0;
     for (let m = 0; m < 24; m++) {
-      const created = createMatch({ matchId: 'v3', rules: [...ALL_RULE_IDS], gameCount: 5, abilities: true }, [m + 101, 9, 2, 6]);
+      const created = createMatch({ matchId: 'v3', rules: [...STAGE1_RULE_IDS], gameCount: 5, abilities: true }, [m + 101, 9, 2, 6]);
       if (!created.ok) throw new Error(created.error.message);
       let s = created.state;
       const known = SEATS.map(() => new Set<string>());
@@ -267,6 +275,79 @@ describe('見える情報（超富豪モード：特権あり、design-3 §2.8�
       }
     }
   });
+});
+
+describe('見える情報（第2段階：24種、design-4 §2.7）', () => {
+  it('非公開の手札を入れ替えても、その席から見える状態・出せる手・出来事は変わらない（24種、特権あり・なし）', () => {
+    const rng = rngFromSeed([24, 8, 15, 4]);
+    let checked = 0;
+    const kinds = new Set<string>();
+    for (let m = 0; m < 30; m++) {
+      // 24種から選ぶ（3の倍数の回は24種すべて）。前提を満たさないルールは外す
+      let rules = (m % 3 === 0 ? [...ALL_RULE_IDS] : ALL_RULE_IDS.filter((_, i) => (m + i) % 3 !== 0)) as RuleId[];
+      rules = rules.filter((r) => (RULE_MODULES.find((x) => x.id === r)?.requires ?? []).every((q) => rules.includes(q)));
+      const abilities = m % 2 === 1 && rules.includes('dethrone');
+      const created = createMatch({ ...cfg(rules, 5), abilities }, [m + 201, 3, 9, 27]);
+      if (!created.ok) throw new Error(created.error.message);
+      let s = created.state;
+      const known = SEATS.map(() => new Set<string>());
+      const learnAll = (events: readonly GameEvent[]) => SEATS.forEach((v) => learn(known[v]!, events, v));
+      learnAll(created.events);
+      let steps = 0;
+      while (s.phase !== 'matchResult' && steps < 6000) {
+        steps++;
+        if (s.phase === 'gameResult') {
+          const r = applyAction(s, { type: 'nextGame' });
+          if (!r.ok) throw new Error();
+          s = r.state;
+          known.forEach((k) => k.clear());
+          learnAll(r.events);
+          continue;
+        }
+        if ((s.phase === 'play' || s.phase === 'ability') && nextInt(rng, 3) === 0) {
+          const viewer = SEATS[nextInt(rng, 4)]!;
+          const t = swapHidden(s, viewer, rng, known[viewer]!);
+          if (t !== null) {
+            sameForViewer(s, t, viewer);
+            const a = viewerAction(s, viewer, rng);
+            if (a !== null) {
+              const ra = applyAction(s, a);
+              const rb = applyAction(t, a);
+              expect(rb.ok).toBe(ra.ok);
+              if (ra.ok) for (const e of ra.events) kinds.add(e.type);
+              // 隠れた手札によって公開の結果が変わる手のあとは比べない（漏れではない。engine-assumptions.md H）:
+              // 都落ち、自分が使った透視・強奪、DEATH・Q ボンバー（捨てるカードが手札で決まる）、大革命（残りの手札を公開する）、
+              // 自分が当事者の闇市（受け取るカードが相手の手札で決まる）
+              const revealed =
+                ra.ok &&
+                ra.events.some(
+                  (e) =>
+                    e.type === 'dethrone' ||
+                    (e.type === 'ability' && (e.ability === 'peek' || e.ability === 'steal')) ||
+                    e.type === 'purge' ||
+                    e.type === 'callDiscard' ||
+                    e.type === 'instantWin' ||
+                    (e.type === 'trade' && (e.from === viewer || e.to === viewer)),
+                );
+              if (ra.ok && rb.ok && !revealed) {
+                expect(eventsFor(rb.events, viewer)).toStrictEqual(eventsFor(ra.events, viewer));
+                sameForViewer(ra.state, rb.state, viewer);
+                expect(awaiting(rb.state)).toStrictEqual(awaiting(ra.state));
+              }
+            }
+            checked++;
+          }
+        }
+        const r = applyAction(s, randomAction(s, rng));
+        if (!r.ok) throw new Error(r.error.message);
+        s = r.state;
+        learnAll(r.events);
+      }
+    }
+    expect(checked).toBeGreaterThan(300);
+    // 比べた操作に、第2段階の出来事が含まれている（闇市の中身は triple_a_trade.test.ts の固定の場面で4席それぞれ確かめる）
+    for (const k of ['choiceStart', 'choiceSkip', 'colorLock']) expect(kinds, k).toContain(k);
+  }, 60_000);
 });
 
 describe('見える情報（ダイヤの3スタートの交換中、design-2 §6.6）', () => {
