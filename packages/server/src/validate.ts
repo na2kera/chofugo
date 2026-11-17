@@ -68,7 +68,7 @@ function parseCallRanks(v: unknown): (number | 'joker')[] | null {
   return out;
 }
 
-const TOKEN_RE =/^[A-Za-z0-9_-]{22,64}$/;
+const TOKEN_RE = /^[A-Za-z0-9_-]{22,64}$/;
 const MATCH_ID_RE = /^[A-Za-z0-9_-]{1,32}$/;
 
 function isMatchId(v: unknown): v is string {
