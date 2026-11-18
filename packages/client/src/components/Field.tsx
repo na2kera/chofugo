@@ -1,7 +1,7 @@
 // 場（design-client §4.5、§7.4、§7.5）。いちばん上に出ている手のカードと、発動中の状態の札だけ。
 // 強さが逆のとき（game.reversed）は枠を赤にする。ジョーカーには何の代わりかを小さく添える。
 
-import type { Color, Play, Rank, SeatId, Suit } from '@chofugo/engine';
+import type { CallRank, Color, Play, Rank, SeatId, Suit } from '@chofugo/engine';
 import { jokerStandIn, isRedSuit, rankKey } from '../lib/cards.ts';
 import { fieldLayout, ROW_STEP } from '../lib/layout.ts';
 import { SUIT_GLYPHS_SMALL } from '../pixel/patterns.ts';
@@ -48,6 +48,51 @@ function LockPlate({ label, suits }: { label: string; suits: Suit[] }) {
   );
 }
 
+export type FieldStatesProps = {
+  revolution: boolean;
+  tempReverse: boolean;
+  suitLock: Suit[] | null;
+  /** 激縛りのマーク。 */
+  seqLock: Suit[] | null;
+  colorLock: Color | null;
+  orderReversed: boolean;
+  ban: Rank | null;
+  /** Q ボンバーの宣言（ルールの説明の見本だけの札、design-5 §6.2。対戦の画面では出さない）。 */
+  call?: CallRank[] | null;
+};
+
+/** 数字の並び（「7・K」。ジョーカーは「JOKER」）。 */
+function callText(ranks: CallRank[]): string {
+  return ranks.map((r) => (r === 'joker' ? 'JOKER' : rankKey(r))).join('・');
+}
+
+/**
+ * 発動中の状態の札の並び（場の枠のいちばん上）。対戦の画面の場と、ルールの説明の見本で共用する（design-5 §4.1）。
+ * 札が1つもなければ何も出さない。
+ */
+export function FieldStates({ revolution, tempReverse, suitLock, seqLock, colorLock, orderReversed, ban, call = null }: FieldStatesProps) {
+  if (!(revolution || tempReverse || suitLock !== null || seqLock !== null || colorLock !== null || orderReversed || ban !== null || call !== null)) return null;
+  return (
+    <div className={s.states}>
+      {revolution && <span className={`f red redt ${s.state}`}>革命中</span>}
+      {tempReverse && <span className={`f red redt ${s.state}`}>J バック中</span>}
+      {suitLock !== null && <LockPlate label="縛り" suits={suitLock} />}
+      {seqLock !== null && <LockPlate label="激縛り" suits={seqLock} />}
+      {colorLock !== null && (
+        <span className={`f win hi ${s.state}`}>
+          {/* 中を1つの span にまとめ、「独裁 7」と同じく空白1つで区切る（flex の子に分けると空白が消える） */}
+          <span>
+            色縛り <span className={colorLock === 'red' ? 'redt' : undefined}>{colorLock === 'red' ? '赤' : '黒'}</span>
+          </span>
+        </span>
+      )}
+      {orderReversed && <span className={`f win hi ${s.state}`}>逆回り</span>}
+      {ban !== null && <span className={`f win hi ${s.state}`}>独裁 {rankKey(ban)}</span>}
+      {call !== null && <span className={`f win hi ${s.state}`}>宣言 {callText(call)}</span>}
+    </div>
+  );
+}
+
 export function Field({ play, revolution, tempReverse, reversed, suitLock, seqLock = null, orderReversed = false, ban = null, colorLock = null, motion, motionKey, note }: Props) {
   const [ref, width] = useWidth<HTMLDivElement>(340);
   const cards = play?.cards ?? [];
@@ -62,24 +107,15 @@ export function Field({ play, revolution, tempReverse, reversed, suitLock, seqLo
     motion === null ? '' : motion.kind === 'out' ? s.out : motion.from === 'me' ? s.inMe : [s.inLeft, s.inCenter, s.inRight][motion.from];
   return (
     <div className={`f ${reversed ? s.frameRed : s.frame} ${s.field}`}>
-      {(revolution || tempReverse || suitLock !== null || seqLock !== null || colorLock !== null || orderReversed || ban !== null) && (
-        <div className={s.states}>
-          {revolution && <span className={`f red redt ${s.state}`}>革命中</span>}
-          {tempReverse && <span className={`f red redt ${s.state}`}>J バック中</span>}
-          {suitLock !== null && <LockPlate label="縛り" suits={suitLock} />}
-          {seqLock !== null && <LockPlate label="激縛り" suits={seqLock.suits} />}
-          {colorLock !== null && (
-            <span className={`f win hi ${s.state}`}>
-              {/* 中を1つの span にまとめ、「独裁 7」と同じく空白1つで区切る（flex の子に分けると空白が消える） */}
-              <span>
-                色縛り <span className={colorLock === 'red' ? 'redt' : undefined}>{colorLock === 'red' ? '赤' : '黒'}</span>
-              </span>
-            </span>
-          )}
-          {orderReversed && <span className={`f win hi ${s.state}`}>逆回り</span>}
-          {ban !== null && <span className={`f win hi ${s.state}`}>独裁 {rankKey(ban)}</span>}
-        </div>
-      )}
+      <FieldStates
+        revolution={revolution}
+        tempReverse={tempReverse}
+        suitLock={suitLock}
+        seqLock={seqLock === null ? null : seqLock.suits}
+        colorLock={colorLock}
+        orderReversed={orderReversed}
+        ban={ban}
+      />
       <div ref={ref} className={s.area}>
         {play !== null && (
           <div

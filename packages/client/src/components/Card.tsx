@@ -86,7 +86,10 @@ export function Card({ id, large = false, look = 'normal', received = false, pee
   );
 }
 
-/** 裏向きのカード（相手の枠の小さい1枚）。 */
-export function CardBack() {
-  return <i className={s.back} aria-hidden="true" />;
+/**
+ * 裏向きのカード。ふだんは相手の枠の小さい1枚（22×30）。
+ * size='card' で表のカードと同じ大きさ（56×80）にする（ルールの説明の見本、design-5 §6.2）。模様は同じ。
+ */
+export function CardBack({ size = 'small' }: { size?: 'small' | 'card' } = {}) {
+  return <i className={size === 'card' ? `${s.back} ${s.backCard}` : s.back} aria-hidden="true" />;
 }

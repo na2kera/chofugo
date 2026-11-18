@@ -33,6 +33,10 @@
   height: 44px;
   flex: none;
 }
+.topRight {
+  display: flex;
+  flex: none;
+}
 .menuBtn {
   width: 44px;
   height: 44px;

@@ -11,6 +11,7 @@ import { seatName } from '../lib/seats.ts';
 import { ARROW_GLYPHS } from '../pixel/patterns.ts';
 import { Pixel } from '../pixel/Pixel.tsx';
 import { ADVANCED_RULE_ORDER, LOBBY_RULE_ORDER, RULES_TEXT, SPECIAL_RULE_ORDER } from '../rules-text.ts';
+import { Help } from './Help.tsx';
 import { InviteLink } from './InviteLink.tsx';
 import type { ScreenProps } from './types.ts';
 import s from './Lobby.module.css';
@@ -38,8 +39,10 @@ const COUNTS: { value: GameCount; label: string }[] = [
   { value: null, label: '無制限' },
 ];
 
-export function Lobby({ state, snap, api, initialOpen }: ScreenProps & { initialOpen?: RuleId }) {
+export function Lobby({ state, snap, api, initialOpen, initialHelp }: ScreenProps & { initialOpen?: RuleId; initialHelp?: boolean }) {
   const [open, setOpen] = useState<RuleId | null>(initialOpen ?? null);
+  // ルールの説明（design-5 §6.4）。ロビーの上に重ねる。試合が始まるとロビーごと外れて閉じる
+  const [helpOpen, setHelpOpen] = useState(initialHelp ?? false);
   const host = state.isHost;
   const cfg = state.room.config;
   const canAct = host && snap.ready && snap.pending === null;
@@ -150,7 +153,13 @@ export function Lobby({ state, snap, api, initialOpen }: ScreenProps & { initial
 
       <section className={`f win ${s.box}`}>
         <div className={s.hrow}>
-          <h2 className={s.h}>ルール</h2>
+          {/* 見出し「ルール」と「？」を左にまとめる（design-5 §6.4） */}
+          <div className={s.hleft}>
+            <h2 className={s.h}>ルール</h2>
+            <button type="button" className={s.help} aria-label="ルールの説明" onClick={() => setHelpOpen(true)}>
+              ？
+            </button>
+          </div>
           {editable &&
             (mode === 'custom' ? (
               <button type="button" className={s.reset} disabled={!canAct} onClick={() => setConfig(mode, CUSTOM_MODE_RULE_IDS, cfg.gameCount)}>
@@ -227,6 +236,7 @@ export function Lobby({ state, snap, api, initialOpen }: ScreenProps & { initial
           <p className={s.wait}>ホストが始めるのを待っています</p>
         )}
       </div>
+      {helpOpen && <Help mode={mode} rules={cfg.rules} yourTurn={false} onClose={() => setHelpOpen(false)} />}
     </div>
   );
 }

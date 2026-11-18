@@ -43,6 +43,8 @@ import {
 import { ARROW_GLYPHS } from '../pixel/patterns.ts';
 import { Pixel } from '../pixel/Pixel.tsx';
 import { Menu } from './Menu.tsx';
+import { Help } from './Help.tsx';
+import { showYourTurn, type HelpItem } from '../lib/help.ts';
 import { AbilityBar, AbilityPanelBox, AbilitySelectList, type UseArgs } from './Abilities.tsx';
 import {
   abilityButtons,
@@ -72,9 +74,12 @@ type Props = ScreenProps & {
   /** 見本ページ用：闇市で選んだ相手・Q ボンバーで選んだ数字。 */
   initialTradeTarget?: SeatId;
   initialCallRanks?: CallRank[];
+  /** 見本ページ用：最初からルールの説明を開く（'list' は一覧）・止める見本のコマ。 */
+  initialHelp?: HelpItem | 'list';
+  initialHelpFrame?: number;
 };
 
-export function Table({ state, snap, api, fixedNow, initialSelected, initialStep, initialMenu, initialPanel, initialStealCard, initialSkipOn, initialTradeTarget, initialCallRanks }: Props) {
+export function Table({ state, snap, api, fixedNow, initialSelected, initialStep, initialMenu, initialPanel, initialStealCard, initialSkipOn, initialTradeTarget, initialCallRanks, initialHelp, initialHelpFrame }: Props) {
   const view = state.view!;
   const game = view.game!;
   const me = view.seat;
@@ -87,6 +92,8 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
   const [stepS, setStepS] = useState<Scoped<PlayStep>>({ key, value: initialStep ?? NO_STEP });
   const [receivedCleared, setReceivedCleared] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(initialMenu ?? false);
+  // ルールの説明（design-5 §6.4）。メニューと同じく、この画面の上に重ねる。画面が切り替わると、この部品ごと外れて閉じる
+  const [helpOpen, setHelpOpen] = useState(initialHelp !== undefined);
   // 特権の選択の枠・強奪で選んだカード・スキップの ON/OFF も、試合・ゲーム・待ちの番号に結び付ける（design-3 §6.1）。
   // 特権を使うと待ちの番号が変わるので、すべて捨てられる
   const [panelS, setPanelS] = useState<Scoped<AbilityPanel | null>>({ key, value: initialPanel ?? null });
@@ -444,9 +451,15 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
       <div className={pinActions ? s.scroll : s.flow}>
       <div className={s.topbar}>
         <span className="mut">{title}</span>
-        <button type="button" className={s.menuBtn} aria-label="メニュー" onClick={() => setMenuOpen(true)}>
-          ≡
-        </button>
+        {/* 右側に「？」と ≡ をまとめる（design-5 §6.4） */}
+        <div className={s.topRight}>
+          <button type="button" className={s.menuBtn} aria-label="ルールの説明" onClick={() => setHelpOpen(true)}>
+            ？
+          </button>
+          <button type="button" className={s.menuBtn} aria-label="メニュー" onClick={() => setMenuOpen(true)}>
+            ≡
+          </button>
+        </div>
       </div>
 
       <div className={s.opps}>
@@ -534,6 +547,16 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
         </div>
       )}
       {menuOpen && <Menu state={state} feed={snap.feed} onClose={() => setMenuOpen(false)} onLeave={api.goHome} />}
+      {helpOpen && (
+        <Help
+          mode={state.room.config.mode}
+          rules={state.room.config.rules}
+          yourTurn={showYourTurn(mine)}
+          onClose={() => setHelpOpen(false)}
+          {...(initialHelp !== undefined && initialHelp !== 'list' ? { initial: initialHelp } : {})}
+          {...(initialHelpFrame !== undefined ? { fixedFrame: initialHelpFrame } : {})}
+        />
+      )}
     </div>
   );
 }

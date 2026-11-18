@@ -1,6 +1,7 @@
 // 見本ページ（開発のときだけ）。固定のデータで各画面を描く。/dev/gallery?s=<場面>
 // 画像で確かめるために使う（design-client §6、§7.12）。
 
+import { ALL_ABILITY_IDS } from '@chofugo/engine';
 import type { AbilityId, CallRank, CardId, Color, SeatId, UsableAbility } from '@chofugo/engine';
 import { ALL_RULE_IDS, DAIFUGO_MODE_DEFAULT_RULES, STAGE1_RULE_IDS, type RuleId } from '@chofugo/engine';
 import type { GameMode, StateMessage } from '@chofugo/server/protocol';
@@ -11,6 +12,8 @@ import type { Snapshot } from '../net/RoomClient.ts';
 import { GameResult, MatchResult } from '../screens/Results.tsx';
 import { Lobby } from '../screens/Lobby.tsx';
 import { Menu } from '../screens/Menu.tsx';
+import { Help } from '../screens/Help.tsx';
+import { demoOf, parseFixedFrame, type HelpItem } from '../lib/help.ts';
 import { Banner, RoomBody } from '../screens/Room.tsx';
 import { Home, NameEntry } from '../screens/Simple.tsx';
 import { Table } from '../screens/Table.tsx';
@@ -699,6 +702,89 @@ function historyFeed(): Feed {
   };
 }
 
+// ---------- ルールの説明「？」（design-5） ----------
+
+/**
+ * ?s=help-demo&rule=<ルール ID>（特権は &ability=<特権 ID>）&frame=<コマ。1から>&rm=1（視差効果を減らす）。
+ * frame を付けると、そのコマで止まる（自動で進まない）。付けなければ自動で進む。
+ */
+function helpParams(): { item: HelpItem; frame?: number; reduced?: boolean } {
+  const q = new URLSearchParams(location.search);
+  const ab = q.get('ability');
+  const rule = q.get('rule');
+  const item: HelpItem =
+    ab !== null && (ALL_ABILITY_IDS as readonly string[]).includes(ab)
+      ? { kind: 'ability', id: ab as AbilityId }
+      : { kind: 'rule', id: rule !== null && (ALL_RULE_IDS as readonly string[]).includes(rule) ? (rule as RuleId) : 'temp_reverse_on_j' };
+  const frame = parseFixedFrame(q.get('frame'), demoOf(item)?.length ?? 0);
+  return { item, ...(frame !== null ? { frame } : {}), ...(q.get('rm') === '1' ? { reduced: true } : {}) };
+}
+
+function helpList(mode: GameMode, rules: RuleId[], yourTurn = false): () => React.ReactNode {
+  return () => <Help mode={mode} rules={rules} yourTurn={yourTurn} onClose={() => {}} />;
+}
+
+/** 長いゲーム数（無制限の第12ゲーム）の対戦の画面。上の帯の左右が重ならないことを確かめる。 */
+function longTitle(): StateMessage {
+  const st = theirTurn();
+  return { ...st, view: { ...st.view!, gameNo: 12, gameCount: null } };
+}
+
+const HELP_SCENES: Record<string, Scene> = {
+  'help-list-daifugo': { title: 'ルールの説明（一覧・大富豪モード）', render: helpList('daifugo', [...DAIFUGO_MODE_DEFAULT_RULES]) },
+  'help-list-custom': { title: 'ルールの説明（一覧・カスタム24種）', render: helpList('custom', [...ALL_RULE_IDS]) },
+  'help-list-chofugo': { title: 'ルールの説明（一覧・超富豪モード）', render: helpList('chofugo', [...ALL_RULE_IDS]) },
+  'help-demo': {
+    title: 'ルールの説明（1つを開いた。&rule= / &ability= / &frame= / &rm=1）',
+    render: () => {
+      const h = helpParams();
+      return (
+        <Help
+          mode="custom"
+          rules={[...ALL_RULE_IDS]}
+          yourTurn={false}
+          onClose={() => {}}
+          initial={h.item}
+          {...(h.frame !== undefined ? { fixedFrame: h.frame } : {})}
+          {...(h.reduced ? { reducedMotion: true } : {})}
+        />
+      );
+    },
+  },
+  'help-nodemo': {
+    title: 'ルールの説明（見本がまだない項目：8切り）',
+    render: () => <Help mode="custom" rules={[...ALL_RULE_IDS]} yourTurn={false} onClose={() => {}} initial={{ kind: 'rule', id: 'flush_on_8' }} />,
+  },
+  'help-yourturn': {
+    title: 'ルールの説明（開いている間に自分の番になった・一覧）',
+    render: () => {
+      const st = mockTurn();
+      return <Table state={st} snap={withSnap(st)} api={noopApi} fixedNow={NOW} initialHelp="list" />;
+    },
+  },
+  'help-yourturn-demo': {
+    title: 'ルールの説明（自分の番・闇市の3コマ目で止める）',
+    render: () => {
+      const st = mockTurn();
+      return <Table state={st} snap={withSnap(st)} api={noopApi} fixedNow={NOW} initialHelp={{ kind: 'rule', id: 'triple_a_trade' }} initialHelpFrame={2} />;
+    },
+  },
+  'help-lobby': {
+    title: 'ルールの説明（ロビーから開いた・カスタム）',
+    render: () => {
+      const st = lobbyCustom(true, [...DAIFUGO_MODE_DEFAULT_RULES, 'block_flush_with_4', 'give_on_7', 'triple_a_trade']);
+      return <Lobby state={st} snap={withSnap(st)} api={noopApi} initialHelp />;
+    },
+  },
+  'play-longtitle': {
+    title: '対戦（無制限の第12ゲーム・上の帯の「？」≡）',
+    render: () => {
+      const st = longTitle();
+      return <Table state={st} snap={withSnap(st)} api={noopApi} fixedNow={NOW} />;
+    },
+  },
+};
+
 const SCENES: Record<string, Scene> = {
   home: { title: 'ホーム', render: () => <Home go={() => {}} /> },
   'home-error': { title: 'ホーム（作成エラー）', render: () => <Home go={() => {}} initialError="ルームを作れませんでした。もう一度試してください" /> },
@@ -1114,6 +1200,7 @@ const SCENES: Record<string, Scene> = {
       return <Menu state={st} feed={feed} onClose={() => {}} onLeave={() => {}} initial="history" />;
     },
   },
+  ...HELP_SCENES,
 };
 
 

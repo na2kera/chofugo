@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 
 /** 要素の幅（px）を追う。 */
 export function useWidth<T extends HTMLElement>(initial = 366): [React.RefObject<T | null>, number] {
@@ -25,4 +25,19 @@ export function useNow(intervalMs: number, active = true): number {
     return () => clearInterval(t);
   }, [intervalMs, active]);
   return now;
+}
+
+const REDUCED_QUERY = '(prefers-reduced-motion: reduce)';
+
+/** OS の「視差効果を減らす」設定（prefers-reduced-motion: reduce）。設定が変わったら描き直す。 */
+export function useReducedMotion(): boolean {
+  return useSyncExternalStore(
+    (on) => {
+      const mq = globalThis.matchMedia?.(REDUCED_QUERY);
+      if (mq === undefined) return () => {};
+      mq.addEventListener('change', on);
+      return () => mq.removeEventListener('change', on);
+    },
+    () => globalThis.matchMedia?.(REDUCED_QUERY).matches ?? false,
+  );
 }

@@ -96,6 +96,11 @@
   background-size: 16px 16px;
   image-rendering: pixelated;
 }
+/* 表のカードと同じ大きさの裏（見本の行、design-5 §6.2） */
+.backCard {
+  width: 56px;
+  height: 80px;
+}
 
 /* 透視で見られたカード（design-3 §4.4）：上の端に赤い線（高さ 4px）。枠の上の辺に重ねる */
 .peeked::before {
