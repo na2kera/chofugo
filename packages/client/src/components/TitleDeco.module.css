@@ -1,0 +1,41 @@
+.title {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 32px;
+}
+
+/* 回転や縮小を使わず、2px の格子上で強い札を段違いに広げる。 */
+.cards {
+  position: relative;
+  width: 160px;
+  height: 96px;
+  pointer-events: none;
+}
+.cards > div { position: absolute; }
+.leftCard { left: 0; top: 16px; }
+.rightCard { right: 0; top: 16px; }
+.jokerCard { left: 52px; top: 0; }
+
+.suits {
+  position: relative;
+  width: 104px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  color: var(--gold-lo);
+  pointer-events: none;
+}
+.suits::before,
+.suits::after {
+  content: '';
+  position: absolute;
+  top: 6px;
+  width: 32px;
+  height: 2px;
+  background: var(--gold-lo);
+}
+.suits::before { right: calc(100% + 16px); }
+.suits::after { left: calc(100% + 16px); }

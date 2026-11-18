@@ -3,13 +3,14 @@
 import { useState } from 'react';
 import type { CreateRoomResponse, StateMessage } from '@chofugo/server/protocol';
 import { Logo } from '../components/Logo.tsx';
+import { TitleDeco } from '../components/TitleDeco.tsx';
 import { NAME_MAX, nameError, normalizeName } from '../lib/names.ts';
 import { getSavedName } from '../lib/storage.ts';
 import s from './Simple.module.css';
 
-export function Home({ go }: { go: (path: string) => void }) {
+export function Home({ go, initialError = null }: { go: (path: string) => void; initialError?: string | null }) {
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(initialError);
   const create = async () => {
     setBusy(true);
     setErr(null);
@@ -26,7 +27,7 @@ export function Home({ go }: { go: (path: string) => void }) {
   return (
     <div className={s.page}>
       <div className={s.center}>
-        <Logo />
+        <TitleDeco><Logo /></TitleDeco>
       </div>
       {err !== null && <p className={`redt ${s.line}`}>{err}</p>}
       <button type="button" className="f btn" disabled={busy} onClick={create}>

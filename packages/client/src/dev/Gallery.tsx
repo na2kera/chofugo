@@ -701,6 +701,7 @@ function historyFeed(): Feed {
 
 const SCENES: Record<string, Scene> = {
   home: { title: 'ホーム', render: () => <Home go={() => {}} /> },
+  'home-error': { title: 'ホーム（作成エラー）', render: () => <Home go={() => {}} initialError="ルームを作れませんでした。もう一度試してください" /> },
   name: { title: '名前の入力', render: () => <NameEntry state={lobby(false)} onJoin={() => {}} joinError={null} /> },
   'name-full': {
     title: '名前の入力（満員）',
