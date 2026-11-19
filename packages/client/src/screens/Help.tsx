@@ -1,6 +1,6 @@
 // ルールの説明（「？」、design-5 §3、§6.4、§6.5）。メニューと同じ形で、いまの画面（対戦の画面・ロビー）の上に重ねる。
 // 一覧：「定番」「応用」「特殊」「特権」の下に名前を2列で並べる（ロビーのルールの並びと同じ形）。この試合で使うものは明るく、使わないものは暗い。どれも押せる。
-// 1つを開くと：名前と「戻る」（上に固定）／説明の文・見本・コマの説明（縦にスクロール）。見本がまだない項目は、名前と説明の文だけ。
+// 1つを開くと：名前と「戻る」（上に固定）／説明の文・見本・コマの説明（縦にスクロール）。見本はルール24種・特権6種のすべてにある。
 // フォーカスと Escape はメニューと同じ（特別な処理を足さない、§6.4）。
 
 import { useState } from 'react';
@@ -27,7 +27,6 @@ type Props = {
 export function Help({ mode, rules, yourTurn, onClose, initial, fixedFrame, reducedMotion }: Props) {
   const [open, setOpen] = useState<HelpItem | null>(initial ?? null);
   const text = open === null ? null : helpText(open);
-  const demo = open === null ? null : demoOf(open);
   const title = text === null ? 'ルールの説明' : text.name;
   return (
     <div className={m.overlay} role="dialog" aria-modal="true" aria-label={title}>
@@ -65,14 +64,12 @@ export function Help({ mode, rules, yourTurn, onClose, initial, fixedFrame, redu
         ) : (
           <div className={m.scroll}>
             <p className={`${l.desc} ${s.desc}`}>{text?.text}</p>
-            {demo !== null && (
-              <RuleDemo
-                key={helpItemKey(open)}
-                data={demo}
-                {...(fixedFrame !== undefined ? { fixedFrame } : {})}
-                {...(reducedMotion !== undefined ? { reducedMotion } : {})}
-              />
-            )}
+            <RuleDemo
+              key={helpItemKey(open)}
+              data={demoOf(open)}
+              {...(fixedFrame !== undefined ? { fixedFrame } : {})}
+              {...(reducedMotion !== undefined ? { reducedMotion } : {})}
+            />
           </div>
         )}
       </div>

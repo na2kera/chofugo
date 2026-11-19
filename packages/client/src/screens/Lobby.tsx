@@ -41,7 +41,8 @@ const COUNTS: { value: GameCount; label: string }[] = [
 
 export function Lobby({ state, snap, api, initialOpen, initialHelp }: ScreenProps & { initialOpen?: RuleId; initialHelp?: boolean }) {
   const [open, setOpen] = useState<RuleId | null>(initialOpen ?? null);
-  // ルールの説明（design-5 §6.4）。ロビーの上に重ねる。試合が始まるとロビーごと外れて閉じる
+  // ルールの説明（design-5 §6.4）。ロビーの上に重ねる。試合が始まるとロビーごと外れて閉じる。切断・再接続の間はロビーが残るので閉じない。
+  // 開いている間は、後ろ（ロビーの本体と下の帯）をキーボードでも操作できないようにする（§6.8。ロビーにメニューはない）
   const [helpOpen, setHelpOpen] = useState(initialHelp ?? false);
   const host = state.isHost;
   const cfg = state.room.config;
@@ -116,7 +117,7 @@ export function Lobby({ state, snap, api, initialOpen, initialHelp }: ScreenProp
 
   return (
     <div className={s.page}>
-    <div className={s.lobby}>
+    <div className={s.lobby} inert={helpOpen}>
       <Logo />
 
       <section className={`f win ${s.box}`}>
@@ -222,7 +223,7 @@ export function Lobby({ state, snap, api, initialOpen, initialHelp }: ScreenProp
 
     </div>
       {/* 下の帯：知らせの1行と、開始のボタン（ルールの欄が伸びても常に見える） */}
-      <div className={s.footer}>
+      <div className={s.footer} inert={helpOpen}>
         {snap.notice !== null && (
           <p className={s.notice} role="status">
             {snap.notice}

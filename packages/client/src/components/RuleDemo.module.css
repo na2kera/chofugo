@@ -5,6 +5,10 @@
   flex-direction: column;
   align-items: stretch;
 }
+/* 表示の枠と、その上に重ねる押せる部品（§6.8）。押せる部品は枠と同じ大きさなので、フォーカスの枠も今までと同じ位置に出る */
+.stage {
+  position: relative;
+}
 .box {
   width: 100%;
   display: flex;
@@ -12,6 +16,10 @@
   align-items: center;
   gap: 8px;
   padding: 8px 4px;
+}
+.hit {
+  position: absolute;
+  inset: 0;
   cursor: pointer;
 }
 /* 状態の札の行（札が出るコマが1つでもある見本だけ。札は Field の札と同じ部品） */

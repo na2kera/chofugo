@@ -44,7 +44,7 @@ import { ARROW_GLYPHS } from '../pixel/patterns.ts';
 import { Pixel } from '../pixel/Pixel.tsx';
 import { Menu } from './Menu.tsx';
 import { Help } from './Help.tsx';
-import { showYourTurn, type HelpItem } from '../lib/help.ts';
+import { closeOverlay, openOverlay, showYourTurn, type HelpItem, type Overlay } from '../lib/help.ts';
 import { AbilityBar, AbilityPanelBox, AbilitySelectList, type UseArgs } from './Abilities.tsx';
 import {
   abilityButtons,
@@ -91,9 +91,11 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
   const [sel, setSel] = useState<Scoped<CardId[]>>({ key, value: initialSelected ?? defaultSel });
   const [stepS, setStepS] = useState<Scoped<PlayStep>>({ key, value: initialStep ?? NO_STEP });
   const [receivedCleared, setReceivedCleared] = useState<string | null>(null);
-  const [menuOpen, setMenuOpen] = useState(initialMenu ?? false);
-  // ルールの説明（design-5 §6.4）。メニューと同じく、この画面の上に重ねる。画面が切り替わると、この部品ごと外れて閉じる
-  const [helpOpen, setHelpOpen] = useState(initialHelp !== undefined);
+  // 重ねる画面（メニューとルールの説明、design-5 §6.4・§6.8）。1つの状態で持ち、同時には開かない。
+  // 画面が切り替わる（対戦 → 結果など）と、この部品ごと外れて閉じる。切断・再接続の間は同じ画面が残るので、閉じない
+  const [overlay, setOverlay] = useState<Overlay>(initialHelp !== undefined ? 'help' : initialMenu ? 'menu' : null);
+  // 重ねた画面を開いている間は、後ろの部分をキーボードでも操作できないようにする（§6.8）
+  const behind = overlay !== null;
   // 特権の選択の枠・強奪で選んだカード・スキップの ON/OFF も、試合・ゲーム・待ちの番号に結び付ける（design-3 §6.1）。
   // 特権を使うと待ちの番号が変わるので、すべて捨てられる
   const [panelS, setPanelS] = useState<Scoped<AbilityPanel | null>>({ key, value: initialPanel ?? null });
@@ -448,15 +450,15 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
 
   return (
     <div className={`${s.table} ${pinActions ? s.tablePinned : ''}`}>
-      <div className={pinActions ? s.scroll : s.flow}>
+      <div className={pinActions ? s.scroll : s.flow} inert={behind}>
       <div className={s.topbar}>
         <span className="mut">{title}</span>
         {/* 右側に「？」と ≡ をまとめる（design-5 §6.4） */}
         <div className={s.topRight}>
-          <button type="button" className={s.menuBtn} aria-label="ルールの説明" onClick={() => setHelpOpen(true)}>
+          <button type="button" className={s.menuBtn} aria-label="ルールの説明" onClick={() => setOverlay((o) => openOverlay(o, 'help'))}>
             ？
           </button>
-          <button type="button" className={s.menuBtn} aria-label="メニュー" onClick={() => setMenuOpen(true)}>
+          <button type="button" className={s.menuBtn} aria-label="メニュー" onClick={() => setOverlay((o) => openOverlay(o, 'menu'))}>
             ≡
           </button>
         </div>
@@ -539,20 +541,22 @@ export function Table({ state, snap, api, fixedNow, initialSelected, initialStep
       <Hand cards={hand} lookOf={lookOf} receivedOf={(id) => received.has(id)} peekedOf={(id) => peekedMine.has(id)} {...(onPress ? { onPress } : {})} />
       </div>
 
-      <div className={s.actionArea}>{actions}</div>
+      <div className={s.actionArea} inert={behind}>
+        {actions}
+      </div>
 
       {anim !== null && anim.kind === 'revolution' && (
         <div className={s.revo} aria-hidden="true">
           <span>革命</span>
         </div>
       )}
-      {menuOpen && <Menu state={state} feed={snap.feed} onClose={() => setMenuOpen(false)} onLeave={api.goHome} />}
-      {helpOpen && (
+      {overlay === 'menu' && <Menu state={state} feed={snap.feed} onClose={() => setOverlay((o) => closeOverlay(o, 'menu'))} onLeave={api.goHome} />}
+      {overlay === 'help' && (
         <Help
           mode={state.room.config.mode}
           rules={state.room.config.rules}
           yourTurn={showYourTurn(mine)}
-          onClose={() => setHelpOpen(false)}
+          onClose={() => setOverlay((o) => closeOverlay(o, 'help'))}
           {...(initialHelp !== undefined && initialHelp !== 'list' ? { initial: initialHelp } : {})}
           {...(initialHelpFrame !== undefined ? { fixedFrame: initialHelpFrame } : {})}
         />

@@ -3,7 +3,11 @@ import { ALL_ABILITY_IDS, ALL_RULE_IDS, DAIFUGO_MODE_DEFAULT_RULES, type MyAwait
 import { ABILITY_DEMOS, RULE_DEMOS, type RuleDemoData } from '../rule-demos.ts';
 import {
   advanceDemo,
+  closeOverlay,
+  demoBadgeProps,
+  demoButtonLabel,
   demoOf,
+  demoSpeech,
   demoProblems,
   demoShape,
   FRAME_MS,
@@ -12,6 +16,7 @@ import {
   LAST_FRAME_MS,
   nextAdvanceAt,
   nextFrame,
+  openOverlay,
   parseFixedFrame,
   showYourTurn,
 } from './help.ts';
@@ -68,36 +73,54 @@ describe('見本のコマの進め方（design-5 §6.6）', () => {
 
 describe('見本の枠の大きさ（design-5 §6.5）', () => {
   it('札が1コマでもあれば札の行を空け、行はいちばん多い数だけ空ける', () => {
-    expect(demoShape(RULE_DEMOS.temp_reverse_on_j!)).toEqual({ badges: true, rows: 0 });
-    expect(demoShape(RULE_DEMOS.triple3_trump!)).toEqual({ badges: false, rows: 0 });
-    expect(demoShape(RULE_DEMOS.triple_a_trade!)).toEqual({ badges: false, rows: 2 });
+    expect(demoShape(RULE_DEMOS.temp_reverse_on_j)).toEqual({ badges: true, rows: 0 });
+    expect(demoShape(RULE_DEMOS.triple3_trump)).toEqual({ badges: false, rows: 0 });
+    expect(demoShape(RULE_DEMOS.triple_a_trade)).toEqual({ badges: false, rows: 2 });
+    // 札と行の両方がある見本（大革命・Q ボンバー）と、行が2つの見本（銀河鉄道）
+    expect(demoShape(RULE_DEMOS.quad2_instant_win)).toEqual({ badges: true, rows: 1 });
+    expect(demoShape(RULE_DEMOS.call_discard_on_q)).toEqual({ badges: true, rows: 1 });
+    expect(demoShape(RULE_DEMOS.triple9_salvage)).toEqual({ badges: false, rows: 2 });
+    expect(demoShape(ABILITY_DEMOS.ban)).toEqual({ badges: true, rows: 0 });
   });
 });
 
 describe('見本のデータ（design-5 §4.3、§6.2）', () => {
   const all: [string, RuleDemoData][] = [
-    ...Object.entries(RULE_DEMOS).map(([k, v]) => [`rule:${k}`, v!] as [string, RuleDemoData]),
-    ...Object.entries(ABILITY_DEMOS).map(([k, v]) => [`ability:${k}`, v!] as [string, RuleDemoData]),
+    ...ALL_RULE_IDS.map((k) => [`rule:${k}`, RULE_DEMOS[k]] as [string, RuleDemoData]),
+    ...ALL_ABILITY_IDS.map((k) => [`ability:${k}`, ABILITY_DEMOS[k]] as [string, RuleDemoData]),
   ];
 
-  it('第1弾の3つがある（J バック・砂嵐・闇市）', () => {
-    expect(Object.keys(RULE_DEMOS).sort()).toEqual(['temp_reverse_on_j', 'triple3_trump', 'triple_a_trade'].sort());
-    expect(Object.keys(ABILITY_DEMOS)).toEqual([]);
+  it('30個そろっている（ルール24種・特権6種。余分な ID もない）', () => {
+    expect(all).toHaveLength(30);
+    expect(Object.keys(RULE_DEMOS).sort()).toEqual([...ALL_RULE_IDS].sort());
+    expect(Object.keys(ABILITY_DEMOS).sort()).toEqual([...ALL_ABILITY_IDS].sort());
+    for (const [, data] of all) expect(Array.isArray(data)).toBe(true);
   });
 
   it.each(all)('%s：コマ2〜4、場4枚以下、行2つ以下・各4枚以下、説明16文字以下、カードの ID、同じコマに同じカードが2回出ない', (_, data) => {
     expect(demoProblems(data)).toEqual([]);
   });
 
-  it('ID はルール・特権の ID だけ', () => {
-    for (const k of Object.keys(RULE_DEMOS)) expect(ALL_RULE_IDS as readonly string[]).toContain(k);
-    for (const k of Object.keys(ABILITY_DEMOS)) expect(ALL_ABILITY_IDS as readonly string[]).toContain(k);
+  it('革命はルールと特権で別の見本を引く', () => {
+    expect(demoOf({ kind: 'rule', id: 'revolution' })).toBe(RULE_DEMOS.revolution);
+    expect(demoOf({ kind: 'ability', id: 'revolution' })).toBe(ABILITY_DEMOS.revolution);
+    expect(RULE_DEMOS.revolution).not.toBe(ABILITY_DEMOS.revolution);
   });
 
-  it('見本のない項目は null（名前と説明の文だけを出す）', () => {
-    expect(demoOf({ kind: 'rule', id: 'flush_on_8' })).toBeNull();
-    expect(demoOf({ kind: 'ability', id: 'revolution' })).toBeNull();
-    expect(demoOf({ kind: 'rule', id: 'triple3_trump' })).not.toBeNull();
+  it('行のカードが0枚の見本（禁止上がりの2コマ目）', () => {
+    const f = RULE_DEMOS.forbidden_finish[1]!;
+    expect(f.rows).toEqual([{ label: 'あなた', cards: [] }]);
+    expect(demoProblems(RULE_DEMOS.forbidden_finish)).toEqual([]);
+  });
+
+  it('宣言の札（Q ボンバー）と独裁の札（独裁）は、カードではなく札で表す', () => {
+    const q = RULE_DEMOS.call_discard_on_q;
+    expect(q[1]!.badges).toEqual([{ kind: 'call', ranks: [7, 13] }]);
+    expect(q[2]!.badges).toEqual([{ kind: 'call', ranks: [7, 13] }]);
+    const b = ABILITY_DEMOS.ban;
+    expect(b[1]!.badges).toEqual([{ kind: 'ban', rank: 15 }]);
+    // 札の数字は場や行のカードに出さない（特定のマークのカードに見えないように）
+    expect(b.flatMap((f) => [...f.field, ...(f.rows ?? []).flatMap((r) => r.cards)])).not.toContain('heart-15');
   });
 
   describe('検査が誤りを見つける', () => {
@@ -138,6 +161,89 @@ describe('見本のデータ（design-5 §4.3、§6.2）', () => {
     it('行のカードが0枚でもよい（見出しとカード1枚ぶんの高さを残す）', () => {
       expect(demoProblems([{ field: ['club-6'], rows: [{ label: 'ほかの人', cards: [] }], note: 'a' }, { field: [], note: 'b' }])).toEqual([]);
     });
+  });
+});
+
+describe('見本の札を場の札の形にする（design-5 §6.2）', () => {
+  const none = { revolution: false, tempReverse: false, suitLock: null, seqLock: null, colorLock: null, orderReversed: false, ban: null, call: null };
+
+  it('札がなければ何も出さない形', () => {
+    expect(demoBadgeProps([])).toEqual(none);
+  });
+
+  it('宣言（call）と独裁（ban）がそのまま渡る', () => {
+    expect(demoBadgeProps([{ kind: 'call', ranks: [7, 13] }])).toEqual({ ...none, call: [7, 13] });
+    expect(demoBadgeProps([{ kind: 'call', ranks: ['joker'] }])).toEqual({ ...none, call: ['joker'] });
+    expect(demoBadgeProps([{ kind: 'ban', rank: 15 }])).toEqual({ ...none, ban: 15 });
+    // 見本のデータから引いても同じ
+    expect(demoBadgeProps(RULE_DEMOS.call_discard_on_q[2]!.badges ?? [])).toEqual({ ...none, call: [7, 13] });
+    expect(demoBadgeProps(ABILITY_DEMOS.ban[1]!.badges ?? [])).toEqual({ ...none, ban: 15 });
+  });
+
+  it('ほかの札（革命・J バック・逆回り・縛り・激縛り・色縛り）', () => {
+    expect(
+      demoBadgeProps([
+        { kind: 'revolution' },
+        { kind: 'tempReverse' },
+        { kind: 'orderReverse' },
+        { kind: 'suitLock', suits: ['heart'] },
+        { kind: 'seqLock', suits: ['spade', 'club'] },
+        { kind: 'colorLock', color: 'red' },
+      ]),
+    ).toEqual({ ...none, revolution: true, tempReverse: true, orderReversed: true, suitLock: ['heart'], seqLock: ['spade', 'club'], colorLock: 'red' });
+  });
+});
+
+describe('見本の読み上げ（design-5 §6.8）', () => {
+  it('場のカード・コマの説明（場が空なら「場は空」）', () => {
+    expect(demoSpeech(RULE_DEMOS.flush_on_8[1]!)).toBe('場に ハートの8。8 を出す');
+    expect(demoSpeech(RULE_DEMOS.flush_on_8[2]!)).toBe('場は空。場が流れて 出した人から');
+    expect(demoSpeech(RULE_DEMOS.spade3_beats_joker[0]!)).toBe('場に ジョーカー。ジョーカーが 1枚');
+  });
+
+  it('状態の札（縛りのマーク・色・宣言・独裁も言葉で）', () => {
+    expect(demoSpeech(RULE_DEMOS.suit_lock[1]!)).toBe('場に ハートの9。札 縛り ハート。同じマークが続くと 縛り');
+    expect(demoSpeech(RULE_DEMOS.sequence_lock[2]!)).toBe('場に ハートの8。札 激縛り ハート。次は ハートの9 だけ');
+    expect(demoSpeech(RULE_DEMOS.color_lock_on_5[0]!)).toBe('場に ハートの5。札 色縛り 赤。赤の5 を出すと');
+    expect(demoSpeech(RULE_DEMOS.reverse_order_on_9[0]!)).toBe('場に クラブの9。札 逆回り。9 を出すと 逆回りに');
+    expect(demoSpeech(RULE_DEMOS.call_discard_on_q[1]!)).toBe('場に スペードのQ、ハートのQ。札 宣言 7・K。数字を 2つまで宣言');
+    expect(demoSpeech(ABILITY_DEMOS.ban[1]!)).toBe('場に スペードの9。札 独裁 2。場が流れるまで 2は出せない');
+    expect(demoSpeech({ field: [], badges: [{ kind: 'call', ranks: ['joker'] }, { kind: 'revolution' }], note: 'a' })).toBe('場は空。札 宣言 ジョーカー、革命中。a');
+  });
+
+  it('行の見出しとカード、裏向きの枚数、強調、0枚の行', () => {
+    expect(demoSpeech(RULE_DEMOS.give_on_7[1]!)).toBe('場に クラブの7。あなた：ハートのJ。次の人：裏向き 2枚、スペードの4（印つき）。手札を1枚 次の人に渡せる');
+    expect(demoSpeech(ABILITY_DEMOS.peek[1]!)).toBe('場は空。相手：裏向き 1枚、スペードの2、ハートの9、クラブの4。ランダムな3枚を 見る');
+    expect(demoSpeech(RULE_DEMOS.forbidden_finish[1]!)).toBe('場に ジョーカー。あなた：なし。これで上がると 反則');
+  });
+
+  it('枠のボタンの名前：何コマ目か・中身・押すと次へ', () => {
+    expect(demoButtonLabel(RULE_DEMOS.triple3_trump[2]!, 2, 3)).toBe('見本 3／3コマ目。場は空。すぐに 場が流れる。押すと次へ');
+  });
+
+  it('30個すべてのコマで、説明の文を含む読み上げができる', () => {
+    for (const data of [...Object.values(RULE_DEMOS), ...Object.values(ABILITY_DEMOS)]) {
+      for (const f of data) expect(demoSpeech(f).endsWith(f.note)).toBe(true);
+    }
+  });
+});
+
+describe('メニューと説明の状態（design-5 §6.8）', () => {
+  it('どちらも開いていなければ、押したほうが開く', () => {
+    expect(openOverlay(null, 'menu')).toBe('menu');
+    expect(openOverlay(null, 'help')).toBe('help');
+  });
+
+  it('同時には開かない（開いているほうがそのまま）', () => {
+    expect(openOverlay('menu', 'help')).toBe('menu');
+    expect(openOverlay('help', 'menu')).toBe('help');
+  });
+
+  it('閉じると、どちらも開いていない状態に戻る。開いていないほうを閉じても変わらない', () => {
+    expect(closeOverlay('menu', 'menu')).toBeNull();
+    expect(closeOverlay('help', 'help')).toBeNull();
+    expect(closeOverlay('help', 'menu')).toBe('help');
+    expect(closeOverlay(null, 'help')).toBeNull();
   });
 });
 

@@ -4,7 +4,9 @@
 import { ALL_ABILITY_IDS, cardOf, type AbilityId, type MyAwaiting, type RuleId } from '@chofugo/engine';
 import type { GameMode } from '@chofugo/server/protocol';
 import { ABILITY_TEXT } from '../abilities-text.ts';
-import { ABILITY_DEMOS, RULE_DEMOS, type RuleDemoData } from '../rule-demos.ts';
+import type { FieldStatesProps } from '../components/Field.tsx';
+import { ABILITY_DEMOS, RULE_DEMOS, type DemoBadge, type DemoFrame, type DemoRow, type RuleDemoData } from '../rule-demos.ts';
+import { cardLabel, rankKey, SUIT_NAME } from './cards.ts';
 import { ADVANCED_RULE_ORDER, LOBBY_RULE_ORDER, RULES_TEXT, SPECIAL_RULE_ORDER } from '../rules-text.ts';
 
 // ---------- 一覧 ----------
@@ -42,9 +44,24 @@ export function helpText(item: HelpItem): { name: string; text: string } {
   return item.kind === 'rule' ? RULES_TEXT[item.id] : ABILITY_TEXT[item.id];
 }
 
-/** その項目の見本。まだ作っていなければ null（名前と説明の文だけを出す）。 */
-export function demoOf(item: HelpItem): RuleDemoData | null {
-  return (item.kind === 'rule' ? RULE_DEMOS[item.id] : ABILITY_DEMOS[item.id]) ?? null;
+/** その項目の見本（ルール24種・特権6種のすべてにある）。 */
+export function demoOf(item: HelpItem): RuleDemoData {
+  return item.kind === 'rule' ? RULE_DEMOS[item.id] : ABILITY_DEMOS[item.id];
+}
+
+// ---------- 重ねる画面（メニューと説明、§6.8） ----------
+
+/** 対戦の画面に重ねている画面。メニューと説明は1つの状態で持ち、同時には開かない。 */
+export type Overlay = 'menu' | 'help' | null;
+
+/** 開く。すでにどちらかが開いていれば、そのまま（重ねた画面の後ろは押せないので、ふつうは起きない）。 */
+export function openOverlay(cur: Overlay, next: 'menu' | 'help'): Overlay {
+  return cur === null ? next : cur;
+}
+
+/** 閉じる。開いているのが別の画面なら、そのまま。 */
+export function closeOverlay(cur: Overlay, which: 'menu' | 'help'): Overlay {
+  return cur === which ? null : cur;
 }
 
 // ---------- 「あなたの番です」 ----------
@@ -106,6 +123,72 @@ export function demoShape(data: RuleDemoData): { badges: boolean; rows: number }
     badges: data.some((f) => (f.badges?.length ?? 0) > 0),
     rows: Math.max(0, ...data.map((f) => f.rows?.length ?? 0)),
   };
+}
+
+// ---------- 見本の札（§6.2） ----------
+
+/** 見本の札を、対戦の画面の場の札（FieldStates）に渡す形にする。宣言（call）は見本だけの札。 */
+export function demoBadgeProps(badges: readonly DemoBadge[]): FieldStatesProps {
+  const p: FieldStatesProps = { revolution: false, tempReverse: false, suitLock: null, seqLock: null, colorLock: null, orderReversed: false, ban: null, call: null };
+  for (const b of badges) {
+    if (b.kind === 'revolution') p.revolution = true;
+    else if (b.kind === 'tempReverse') p.tempReverse = true;
+    else if (b.kind === 'orderReverse') p.orderReversed = true;
+    else if (b.kind === 'suitLock') p.suitLock = b.suits;
+    else if (b.kind === 'seqLock') p.seqLock = b.suits;
+    else if (b.kind === 'colorLock') p.colorLock = b.color;
+    else if (b.kind === 'ban') p.ban = b.rank;
+    else p.call = b.ranks;
+  }
+  return p;
+}
+
+// ---------- 見本の読み上げ（§6.8） ----------
+
+/** 札1つの読み上げ（画面の札と同じ言葉。マークは名前で読む）。 */
+function badgeSpeech(b: DemoBadge): string {
+  switch (b.kind) {
+    case 'revolution':
+      return '革命中';
+    case 'tempReverse':
+      return 'J バック中';
+    case 'orderReverse':
+      return '逆回り';
+    case 'suitLock':
+      return `縛り ${b.suits.map((x) => SUIT_NAME[x]).join('と')}`;
+    case 'seqLock':
+      return `激縛り ${b.suits.map((x) => SUIT_NAME[x]).join('と')}`;
+    case 'colorLock':
+      return `色縛り ${b.color === 'red' ? '赤' : '黒'}`;
+    case 'ban':
+      return `独裁 ${rankKey(b.rank)}`;
+    case 'call':
+      return `宣言 ${b.ranks.map((r) => (r === 'joker' ? 'ジョーカー' : rankKey(r))).join('・')}`;
+  }
+}
+
+/** 行1つの読み上げ（「次の人：裏向き 2枚、スペードの4（印つき）」）。0枚なら「なし」。 */
+function rowSpeech(r: DemoRow): string {
+  const mark = new Set<string>(r.mark ?? []);
+  const backs = r.cards.filter((c) => c === 'back').length;
+  const faces = r.cards.flatMap((c) => (c === 'back' ? [] : [mark.has(c) ? `${cardLabel(c)}（印つき）` : cardLabel(c)]));
+  const parts = [...(backs > 0 ? [`裏向き ${backs}枚`] : []), ...faces];
+  return `${r.label}：${parts.length === 0 ? 'なし' : parts.join('、')}`;
+}
+
+/** いまのコマの中身を読み上げの文にする（場のカード、状態の札、各行の見出しとカード、裏向きの枚数、コマの説明）。画面には出さない。 */
+export function demoSpeech(frame: DemoFrame): string {
+  const parts = [frame.field.length === 0 ? '場は空' : `場に ${frame.field.map(cardLabel).join('、')}`];
+  const badges = frame.badges ?? [];
+  if (badges.length > 0) parts.push(`札 ${badges.map(badgeSpeech).join('、')}`);
+  for (const r of frame.rows ?? []) parts.push(rowSpeech(r));
+  parts.push(frame.note);
+  return parts.join('。');
+}
+
+/** 見本の枠（押せる部品）の読み上げ。何コマ目か・中身・押すと次へ。 */
+export function demoButtonLabel(frame: DemoFrame, index: number, count: number): string {
+  return `見本 ${index + 1}／${count}コマ目。${demoSpeech(frame)}。押すと次へ`;
 }
 
 // ---------- 見本のデータの検査（§5、§6.2） ----------

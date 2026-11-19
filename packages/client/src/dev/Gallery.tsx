@@ -13,7 +13,8 @@ import { GameResult, MatchResult } from '../screens/Results.tsx';
 import { Lobby } from '../screens/Lobby.tsx';
 import { Menu } from '../screens/Menu.tsx';
 import { Help } from '../screens/Help.tsx';
-import { demoOf, parseFixedFrame, type HelpItem } from '../lib/help.ts';
+import { demoOf, helpItemKey, helpSections, parseFixedFrame, type HelpItem } from '../lib/help.ts';
+import { RuleDemo } from '../components/RuleDemo.tsx';
 import { Banner, RoomBody } from '../screens/Room.tsx';
 import { Home, NameEntry } from '../screens/Simple.tsx';
 import { Table } from '../screens/Table.tsx';
@@ -716,12 +717,44 @@ function helpParams(): { item: HelpItem; frame?: number; reduced?: boolean } {
     ab !== null && (ALL_ABILITY_IDS as readonly string[]).includes(ab)
       ? { kind: 'ability', id: ab as AbilityId }
       : { kind: 'rule', id: rule !== null && (ALL_RULE_IDS as readonly string[]).includes(rule) ? (rule as RuleId) : 'temp_reverse_on_j' };
-  const frame = parseFixedFrame(q.get('frame'), demoOf(item)?.length ?? 0);
+  const frame = parseFixedFrame(q.get('frame'), demoOf(item).length);
   return { item, ...(frame !== null ? { frame } : {}), ...(q.get('rm') === '1' ? { reduced: true } : {}) };
 }
 
 function helpList(mode: GameMode, rules: RuleId[], yourTurn = false): () => React.ReactNode {
   return () => <Help mode={mode} rules={rules} yourTurn={yourTurn} onClose={() => {}} />;
+}
+
+/**
+ * 30個の見本の、すべてのコマを止めて並べた確認用の一覧（設計担当がルールと照らして目で確かめるため、§6.7）。
+ * 1行に1つの見本。並びは説明の一覧と同じ。各コマの枠は上ぞろえなので、コマによって枠の高さが違えば目で分かる。
+ * 広い画面で開く（例：&vw=1260&vh=9000。枠の中を縦横にスクロールできる）。
+ */
+function HelpSheet() {
+  const entries = helpSections('chofugo', [...ALL_RULE_IDS]).flatMap((sec) => sec.entries.map((e) => ({ ...e, title: sec.title })));
+  return (
+    <div style={{ height: '100%', overflow: 'auto' }}>
+      <div style={{ padding: 16, width: 'max-content' }}>
+        {entries.map((e) => {
+          const data = demoOf(e.item);
+          return (
+            <section key={helpItemKey(e.item)} style={{ display: 'flex', alignItems: 'flex-start', gap: 16, marginBottom: 24 }}>
+              <h3 style={{ width: 120, margin: 0, fontWeight: 400, color: 'var(--gold)' }}>
+                {e.title}
+                <br />
+                {e.name}
+              </h3>
+              {data.map((_, i) => (
+                <div key={i} style={{ width: 260 }}>
+                  <RuleDemo data={data} fixedFrame={i} reducedMotion={false} />
+                </div>
+              ))}
+            </section>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 /** 長いゲーム数（無制限の第12ゲーム）の対戦の画面。上の帯の左右が重ならないことを確かめる。 */
@@ -751,10 +784,7 @@ const HELP_SCENES: Record<string, Scene> = {
       );
     },
   },
-  'help-nodemo': {
-    title: 'ルールの説明（見本がまだない項目：8切り）',
-    render: () => <Help mode="custom" rules={[...ALL_RULE_IDS]} yourTurn={false} onClose={() => {}} initial={{ kind: 'rule', id: 'flush_on_8' }} />,
-  },
+  'help-sheet': { title: 'ルールの説明（30個の見本の全コマを並べた確認用。&vw=1260&vh=<高さ> で広げて開く）', render: () => <HelpSheet /> },
   'help-yourturn': {
     title: 'ルールの説明（開いている間に自分の番になった・一覧）',
     render: () => {
