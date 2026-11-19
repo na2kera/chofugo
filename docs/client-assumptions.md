@@ -232,6 +232,7 @@
 
 ### H13. 確かめた画像と、古くなったその1の画像
 - `docs/mock/client/custom-*.png`（見本ページ `/dev/gallery` をヘッドレスの Chrome で撮ったもの）。カスタムのロビーは、ルールの欄を全部見せるために高さ 1240px でも撮った（`custom-lobby-w360/390/430.png`。実際の高さでは、ロビーの欄が縦にスクロールする。`custom-lobby-h800.png`）。
+- 2026-11-19：ユーザーの確認を得て、モードのボタンが3つになる前の古いロビーの画像10枚（`lobby-12.png`・`lobby-guest.png`・`lobby-host.png`・`lobby-host-h640.png`、`custom-lobby-*.png` の6枚）を消した。いまのロビーは `stage2-lobby-*.png` と `help-button-lobby-*.png` にある。
 
 ## I. その3（超富豪モード）
 
