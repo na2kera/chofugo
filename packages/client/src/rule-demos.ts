@@ -141,9 +141,11 @@ export const RULE_DEMOS: Record<RuleId, RuleDemoData> = {
     { field: ['club-9'], badges: [{ kind: 'orderReverse' }], note: '9 を出すと 逆回りに' },
     { field: [], note: '場が流れると 元に戻る' },
   ],
+  // 3コマ目は、飛ばされた人のその次の人が、場の K より強い A を出した場面
   skip_on_k: [
-    { field: ['club-13'], note: 'K を1枚 出すと' },
-    { field: ['club-13'], note: '次の人を 1人飛ばす' },
+    { field: ['club-13'], rows: [{ label: '次の人', cards: [B, B, B] }], note: 'K を1枚 出すと' },
+    { field: ['club-13'], rows: [{ label: '飛ばされる人', cards: [B, B, B] }], note: '次の人を 1人飛ばす' },
+    { field: ['diamond-14'], rows: [{ label: 'その次の人', cards: [B, B] }], note: 'その次の人が 出す' },
   ],
 
   // ---------- 特殊 ----------
@@ -271,8 +273,10 @@ export const ABILITY_DEMOS: Record<AbilityId, RuleDemoData> = {
     { field: [], note: '自分の番に 使うと' },
     { field: [], badges: [{ kind: 'revolution' }], note: '強さが 逆になる' },
   ],
+  // 3コマ目は、飛ばされた人のその次の人が、場の 6 より強い 9 を出した場面
   skip: [
-    { field: ['club-6'], note: 'カードを 出すときに付ける' },
-    { field: ['club-6'], note: '次の人を 飛ばす' },
+    { field: ['club-6'], rows: [{ label: '次の人', cards: [B, B, B] }], note: 'カードを 出すときに付ける' },
+    { field: ['club-6'], rows: [{ label: '飛ばされる人', cards: [B, B, B] }], note: '次の人を 飛ばす' },
+    { field: ['heart-9'], rows: [{ label: 'その次の人', cards: [B, B] }], note: 'その次の人が 出す' },
   ],
 };

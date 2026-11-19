@@ -215,6 +215,8 @@ describe('見本の読み上げ（design-5 §6.8）', () => {
     expect(demoSpeech(RULE_DEMOS.give_on_7[1]!)).toBe('場に クラブの7。あなた：ハートのJ。次の人：裏向き 2枚、スペードの4（印つき）。手札を1枚 次の人に渡せる');
     expect(demoSpeech(ABILITY_DEMOS.peek[1]!)).toBe('場は空。相手：裏向き 1枚、スペードの2、ハートの9、クラブの4。ランダムな3枚を 見る');
     expect(demoSpeech(RULE_DEMOS.forbidden_finish[1]!)).toBe('場に ジョーカー。あなた：なし。これで上がると 反則');
+    expect(demoSpeech(RULE_DEMOS.skip_on_k[1]!)).toBe('場に クラブのK。飛ばされる人：裏向き 3枚。次の人を 1人飛ばす');
+    expect(demoSpeech(ABILITY_DEMOS.skip[2]!)).toBe('場に ハートの9。その次の人：裏向き 2枚。その次の人が 出す');
   });
 
   it('枠のボタンの名前：何コマ目か・中身・押すと次へ', () => {
