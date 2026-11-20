@@ -1,0 +1,40 @@
+.canvas {
+  position: relative;
+  width: 600px;
+  height: 315px;
+  overflow: hidden;
+  background: var(--bg);
+  image-rendering: pixelated;
+}
+
+.a { background: var(--panel); }
+.hero {
+  position: absolute;
+  left: 156px;
+  top: 46px;
+  width: 144px;
+  transform: scale(2);
+  transform-origin: top left;
+}
+/* 既存ロゴの字間だけ詰め、整数倍の拡大後も中央315pxに収める。 */
+.hero h1 { letter-spacing: 0; padding-left: 0; }
+.leftCards, .rightCards { position: absolute; top: 62px; width: 96px; height: 164px; }
+.leftCards { left: 32px; }
+.rightCards { right: 32px; }
+.leftCards > :last-child, .rightCards > :last-child { position: absolute; left: 40px; top: 84px; }
+.marks { position: absolute; left: 248px; top: 254px; display: flex; gap: 16px; align-items: center; }
+
+.b { background-image: var(--bg-check); background-size: 8px 8px; }
+.title { position: absolute; left: 100px; top: 24px; width: 400px; }
+.title > div { gap: 16px; }
+.titleCopy { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+.titleCopy p { margin: 0; font-size: 16px; line-height: 16px; color: var(--cream); white-space: nowrap; }
+
+.c { background: var(--bg2); }
+.table { position: absolute; left: 72px; top: 56px; width: 456px; height: 208px; }
+.center { position: absolute; left: 188px; top: 94px; width: 224px; height: 120px; display: grid; place-items: center; }
+.seat { position: absolute; display: flex; gap: 4px; padding: 8px; background: var(--bg2); }
+.north { left: 254px; top: 24px; }
+.west { left: 32px; top: 134px; }
+.east { right: 32px; top: 134px; }
+.south { position: absolute; left: 208px; top: 214px; display: flex; gap: 8px; }
