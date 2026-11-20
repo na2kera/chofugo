@@ -1,0 +1,22 @@
+/* パネルの中身の領域いっぱい。ここの幅と高さを測って点の大きさを決める（中身の大きさに左右されない） */
+.body {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+}
+/* 明るい地の四角。余白（4点ぶん）は padding で付ける（InviteQr.tsx） */
+.qr {
+  flex: none;
+  background: var(--cream);
+}
+/* 高さは InviteQr.tsx の OTHER_HEIGHT と合わせる */
+.text {
+  margin: 0;
+  line-height: 16px;
+  text-align: center;
+}

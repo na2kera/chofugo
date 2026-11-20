@@ -29,3 +29,7 @@
   padding: 0 4px;
   color: var(--gold-hi);
 }
+/* 「QR」：「コピー」より狭い面（.face のあとに置いて最小幅だけ変える） */
+.qrFace {
+  min-width: 48px;
+}

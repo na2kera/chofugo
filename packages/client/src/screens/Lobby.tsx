@@ -12,7 +12,8 @@ import { ARROW_GLYPHS } from '../pixel/patterns.ts';
 import { Pixel } from '../pixel/Pixel.tsx';
 import { ADVANCED_RULE_ORDER, LOBBY_RULE_ORDER, RULES_TEXT, SPECIAL_RULE_ORDER } from '../rules-text.ts';
 import { Help } from './Help.tsx';
-import { InviteLink } from './InviteLink.tsx';
+import { InviteLink, inviteUrl } from './InviteLink.tsx';
+import { InviteQr } from './InviteQr.tsx';
 import type { ScreenProps } from './types.ts';
 import s from './Lobby.module.css';
 
@@ -39,11 +40,14 @@ const COUNTS: { value: GameCount; label: string }[] = [
   { value: null, label: '無制限' },
 ];
 
-export function Lobby({ state, snap, api, initialOpen, initialHelp }: ScreenProps & { initialOpen?: RuleId; initialHelp?: boolean }) {
+export function Lobby({ state, snap, api, initialOpen, initialHelp, initialQrOpen }: ScreenProps & { initialOpen?: RuleId; initialHelp?: boolean; initialQrOpen?: boolean }) {
   const [open, setOpen] = useState<RuleId | null>(initialOpen ?? null);
   // ルールの説明（design-5 §6.4）。ロビーの上に重ねる。試合が始まるとロビーごと外れて閉じる。切断・再接続の間はロビーが残るので閉じない。
   // 開いている間は、後ろ（ロビーの本体と下の帯）をキーボードでも操作できないようにする（§6.8。ロビーにメニューはない）
   const [helpOpen, setHelpOpen] = useState(initialHelp ?? false);
+  // 招待の QR コード（client-assumptions S 節）。ホストかどうか・空席があるかどうかに関係なく、全員が開ける。後ろの扱いは説明と同じ
+  const [qrOpen, setQrOpen] = useState(initialQrOpen ?? false);
+  const covered = helpOpen || qrOpen;
   const host = state.isHost;
   const cfg = state.room.config;
   const canAct = host && snap.ready && snap.pending === null;
@@ -117,12 +121,12 @@ export function Lobby({ state, snap, api, initialOpen, initialHelp }: ScreenProp
 
   return (
     <div className={s.page}>
-    <div className={s.lobby} inert={helpOpen}>
+    <div className={s.lobby} inert={covered}>
       <Logo />
 
       <section className={`f win ${s.box}`}>
         <h2 className={s.h}>招待リンク</h2>
-        <InviteLink roomId={state.room.roomId} />
+        <InviteLink roomId={state.room.roomId} onShowQr={() => setQrOpen(true)} />
       </section>
 
       <section className={`f win ${s.box}`}>
@@ -223,7 +227,7 @@ export function Lobby({ state, snap, api, initialOpen, initialHelp }: ScreenProp
 
     </div>
       {/* 下の帯：知らせの1行と、開始のボタン（ルールの欄が伸びても常に見える） */}
-      <div className={s.footer} inert={helpOpen}>
+      <div className={s.footer} inert={covered}>
         {snap.notice !== null && (
           <p className={s.notice} role="status">
             {snap.notice}
@@ -238,6 +242,7 @@ export function Lobby({ state, snap, api, initialOpen, initialHelp }: ScreenProp
         )}
       </div>
       {helpOpen && <Help mode={mode} rules={cfg.rules} yourTurn={false} onClose={() => setHelpOpen(false)} />}
+      {qrOpen && <InviteQr url={inviteUrl(state.room.roomId)} onClose={() => setQrOpen(false)} />}
     </div>
   );
 }

@@ -827,6 +827,16 @@ const SCENES: Record<string, Scene> = {
   'lobby-host': { title: 'ロビー（ホスト）', render: () => <Lobby state={lobby(true)} snap={withSnap(lobby(true))} api={noopApi} /> },
   'lobby-guest': { title: 'ロビー（ホスト以外、説明を開いた）', render: () => <Lobby state={lobby(false)} snap={withSnap(lobby(false))} api={noopApi} initialOpen="spade3_beats_joker" /> },
   'lobby-12': { title: 'ロビー（12文字の名前）', render: () => <Lobby state={lobby(true, NAMES12)} snap={withSnap(lobby(true, NAMES12))} api={noopApi} /> },
+  // QR の場面。見本のルーム ID は本物と同じ22文字なので、点の数も本番と同じ（33×33）
+  'lobby-qr': { title: 'ロビー（ホスト、QR を開いた）', render: () => <Lobby state={lobby(true)} snap={withSnap(lobby(true))} api={noopApi} initialQrOpen /> },
+  'lobby-qr-guest': { title: 'ロビー（ホスト以外、QR を開いた）', render: () => <Lobby state={lobby(false)} snap={withSnap(lobby(false))} api={noopApi} initialQrOpen /> },
+  'lobby-full': {
+    title: 'ロビー（満員、「QR」は押せる）',
+    render: () => {
+      const st = stateMsg({ ...lobby(true), room: { ...lobby(true).room, seats: seats(['なつき', 'たろう', 'ゆい', 'みき'], ['human', 'human', 'human', 'human']) } });
+      return <Lobby state={st} snap={withSnap(st)} api={noopApi} />;
+    },
+  },
   'exchange-lower': {
     title: '交換（下位が選ぶ）',
     render: () => <Table state={exchange('lower')} snap={withSnap(exchange('lower'))} api={noopApi} fixedNow={NOW} />,

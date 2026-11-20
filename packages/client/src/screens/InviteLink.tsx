@@ -1,4 +1,4 @@
-// 招待リンクと「コピー」ボタン。
+// 招待リンクと「コピー」ボタン（ロビーでは右隣に「QR」も）。
 
 import { useEffect, useRef, useState } from 'react';
 import s from './InviteLink.module.css';
@@ -11,7 +11,13 @@ export function inviteUrl(roomId: string): string {
   }
 }
 
-export function InviteLink({ roomId }: { roomId: string }) {
+type Props = {
+  roomId: string;
+  /** 渡されたときだけ「コピー」の右隣に「QR」を出す（ロビーだけ。対戦中のメニューは渡さない）。 */
+  onShowQr?: () => void;
+};
+
+export function InviteLink({ roomId, onShowQr }: Props) {
   const url = inviteUrl(roomId);
   const [copied, setCopied] = useState(false);
   const codeRef = useRef<HTMLElement>(null);
@@ -48,6 +54,11 @@ export function InviteLink({ roomId }: { roomId: string }) {
       <button type="button" className={s.btn} onClick={copy} aria-label="招待リンクをコピー">
         <span className={`f btn2 ${s.face}`}>{copied ? 'コピー済' : 'コピー'}</span>
       </button>
+      {onShowQr !== undefined && (
+        <button type="button" className={s.btn} onClick={onShowQr} aria-label="招待の QR コードを出す">
+          <span className={`f btn2 ${s.face} ${s.qrFace}`}>QR</span>
+        </button>
+      )}
     </div>
   );
 }
