@@ -569,4 +569,5 @@
 - **タブのアイコン（favicon、2026-11-20 にユーザーの依頼で追加）**: ロゴの王冠（`CROWN_GLYPH`、13×9 点）を金色（`--gold`）、地を `--bg` の平らな塗りにした。点を整数倍に拡大するだけなので、にじまない。`favicon.ico`（16・32・48px）、`favicon-32.png`、`apple-touch-icon.png`（180px、王冠は10倍で、まわりに余白）。`packages/client/scripts/favicon.mjs` が Node の zlib だけで書き出す（依存は足していない）。王冠の幅が奇数なので、16px と 48px では左右の余白が1px 違う（左が狭い）。角は丸めていない（iOS は自分で丸める）。
 - **確かめたこと**: 画像3枚を開いて、欠け・にじみ・はみ出しがないこと。a を幅300px に縮めた画像と、中央の正方形に切り抜いた画像でロゴが読めること。開発サーバーで `/og.png` が `image/png` で返ること（ファイルが無い名前は index.html が返るので、content-type で見分けた）、`/r/abcd` の HTML にタグが入っていること。ビルドの出力に `og.png` が入り、本番の JS に `/dev/og` の画面が入っていないこと。`pnpm typecheck` は通る。
 - **テスト**: `pnpm test` は3回目で全部通った（engine 390、server 78、client 193）。1回目は server の1件（`prod.test.mjs` の 413 の項目で、ルームの作成が 500）、2回目は engine の1件（`visibility.test.ts`）で失敗した。どちらも単独で回すと通り、engine と server には今回の差分がない。そのとき、同じ機械で別のプロジェクトの処理が動いていて、負荷の平均が 900 を超えていた（負荷による揺れと見ている。原因の切り分けはしていない）。
-- **確かめていないこと**: 公開先への反映（公開はユーザーの許可を得てから）。LINE・X・Discord などでの実際の表示。
+- **公開**: ユーザーの確認を得て、2026-11-20 に `https://chofugo.na2kera.workers.dev` へ公開した（Version ID e026ce83-5323-4337-975f-c0d8e8b0844a、コミット 66e52d8）。公開先で、`/og.png`・`/favicon.ico`・`/favicon-32.png`・`/apple-touch-icon.png` が画像として返り、中身が手元のファイルと同じこと、招待リンク（`/r/abcd`）の HTML にタグが入っていること、ホームが開けてルームを作れること（201）を curl で確かめた。
+- **確かめていないこと**: LINE・X・Discord などでの実際の表示。実際のブラウザのタブと、iPhone のホーム画面でのアイコンの見え方。
