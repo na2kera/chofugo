@@ -73,7 +73,7 @@ node scripts/bots.mjs --room <ルームID> --count 3 --passive          # ブラ
 
 ### リンクのプレビューの画像（OGP）
 
-`public/og.png`（1200×630）は、開発のときだけの画面 `/dev/og?v=a`（`src/dev/Og.tsx`。`b`・`c` はほかの案）を撮ったもの。作り直すときは、開発サーバーを起動してから、リポジトリのルートで次を実行し、`og-a.png` を `packages/client/public/og.png` に上書きする。
+`public/og.png`（1200×630）は、開発のときだけの画面 `/dev/og?v=b`（`src/dev/Og.tsx`。`a`・`c` はほかの案）を撮ったもの。作り直すときは、開発サーバーを起動してから、リポジトリのルートで次を実行し、`og-b.png` を `packages/client/public/og.png` に上書きする。
 
 ```sh
 node packages/client/scripts/og.mjs http://localhost:19473 docs/mock/client
