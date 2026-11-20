@@ -594,3 +594,23 @@
   - (3) 画面に戻ったときのつなぎ直しは、15秒の無通信の検知と再試行の間隔に任せている（`visibilitychange`・`online` は聞いていない）。iPhone のアプリには再読み込みの操作がないので、N3 で挙げた「戻ったらすぐつなぎ直す」の提案の重みが増す。
 - **確かめたこと**: 開発サーバーで、`/manifest.webmanifest` が `application/manifest+json`、アイコン3つが `image/png` で返ること、招待リンク（`/r/abcd`）の HTML に `rel="manifest"` があること。ヘッドレスの Chrome（既定のコンテキスト）で、`Page.getAppManifest` がマニフェストをエラーなしで読み、`Page.getInstallabilityErrors` が空（インストールの妨げなし）、登録されたサービスワーカーが0個であること。比べるために、マニフェストのないページ（`/og.png`）では `no-manifest` のエラーが出ることも見た。アイコン（丸抜き用を含む）を開いて、王冠が中央にあり欠けていないこと。ビルドの出力にマニフェストとアイコンが入り、本番の JS に `serviceWorker` の文字がないこと。`pnpm typecheck` は通る。`pnpm test` は2回目で全部通った（engine 390、server 78、client 198）。1回目は server の1件（`rejoin.test.mjs`）が失敗し、単独で回すと通った。server と engine に今回の差分はなく、そのとき機械の負荷の平均は 200 を超えていた（O 節と同じ揺れと見ている）。
 - **確かめていないこと**: 公開先への反映。実機の「ホーム画面に追加」（iPhone の Safari、Android の Chrome）。全画面で開いたときの上端・下端の収まり、アイコンの形（丸抜き）、縦の固定、招待リンクがアプリで開くか。
+
+## Q. 独自ドメインと PWA の公開（2026-11-20）
+
+- **場面**: PWA の公開の前に、ユーザーから「na2kera.com のサブドメインでドメインを設定したい、何がよいか」と相談があった。設計担当が `chofugo.na2kera.com` をすすめ、ユーザーが確認した。
+- **先に決めた理由**: ホーム画面に追加したアプリと席の記憶（localStorage）は、どちらもドメインにひもづく。前の URL で入れてもらったあとにドメインを変えると、入れ直しになり、席も引き継げない。
+- **設定**: `packages/client/vite.config.ts` で、ビルドのときだけ `routes: [{ pattern: "chofugo.na2kera.com", custom_domain: true }]` と `workers_dev: true` を足す。
+  - `wrangler.jsonc` に書かない理由：ローカルの `wrangler dev` がリクエストのホストを routes のものに読み替えると、Origin の確認（`origin.ts`）がローカルで通らなくなる恐れがある。開発とテストには持ち込まない（実際に通らなくなるかは確かめていない。持ち込まない形にして避けた）。
+  - `workers_dev: true` の理由：routes を書くと workers.dev の URL は既定で止まる（Cloudflare の説明で確認）。前に配ったリンクのために残す。
+  - DNS の記録と証明書は Cloudflare が作る（`na2kera.com` は同じアカウントのゾーン）。ユーザーの操作は要らなかった。
+- **書き換えたもの**: `index.html` の `og:image` を `https://chofugo.na2kera.com/og.png` にした。ホスト名を書いているのはここだけ（招待リンクは `location.origin` から作る）。
+- **公開**: ユーザーの確認を得て、2026-11-20 に公開した（Version ID 54b3cdbb-fc32-4e91-9a2a-d4e9ff79e552、コミット 0ae630b）。P 節の PWA 対応もこのとき公開した。
+- **公開先で確かめたこと**（`https://chofugo.na2kera.com`）:
+  - マニフェスト・アイコン6つ・`og.png` が正しい種類で返り、中身が手元のファイルと同じ。招待リンクの HTML に `rel="manifest"` と新しい `og:image` がある。
+  - ルームの作成：自分のドメインの Origin では 201、よその Origin では 403。
+  - ヘッドレスの Chrome で、マニフェストをエラーなしで読み、インストールの妨げが0件、登録されたサービスワーカーが0個。
+  - 4つの別々のブラウザ画面（スマホ幅）で超富豪を1ゲーム：29項目すべて OK。4画面の突き合わせ76回で食い違い0、途中の再読み込み9回はすべて1秒以内に復帰、画面のエラーなし（N 節と同じスクリプト）。
+  - 前の URL（`chofugo.na2kera.workers.dev`）も、ホームが開けてルームを作れる。
+- **分かっていること**: 2つの URL は同じ Worker・同じルームに届くが、ブラウザの保存領域は URL ごとに別。前の URL で入った席は、新しい URL では別人の扱いになる。前の URL から新しい URL へ自動で移す仕組みは入れていない。
+- **確かめていないこと**: 実機の「ホーム画面に追加」（iPhone の Safari、Android の Chrome）と、全画面での見え方。LINE・X・Discord でのプレビューの表示。
+

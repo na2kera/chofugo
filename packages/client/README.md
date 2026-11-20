@@ -99,7 +99,7 @@ pnpm run deploy     # ルートから（`pnpm deploy` は pnpm の組み込み�
 
 - 必ず client のビルドの出力（`vite build` が作る `dist/chofugo/wrangler.json`）でデプロイする。`packages/server` で `wrangler deploy` を実行すると、画面の静的ファイルが含まれない。
 - デプロイには Cloudflare へのログイン（`wrangler login`）が必要。
-- 公開先：`https://chofugo.na2kera.workers.dev`（Worker の名前は `chofugo`）。公開先でボットを動かすときは `node scripts/bots.mjs --base https://chofugo.na2kera.workers.dev --count 3`。
+- 公開先：`https://chofugo.na2kera.com`（独自ドメイン。2026-11-20 から）。前の `https://chofugo.na2kera.workers.dev` も同じ Worker に届く（Worker の名前は `chofugo`）。ドメインの設定は `vite.config.ts` にあり、ビルドのときだけ足す。公開先でボットを動かすときは `node scripts/bots.mjs --base https://chofugo.na2kera.workers.dev --count 3`。
 
 ## 素材
 
