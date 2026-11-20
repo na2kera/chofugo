@@ -7,6 +7,7 @@ import { Home } from './screens/Simple.tsx';
 
 const Gallery = import.meta.env.DEV ? lazy(() => import('./dev/Gallery.tsx')) : null;
 const Og = import.meta.env.DEV ? lazy(() => import('./dev/Og.tsx')) : null;
+const Poster = import.meta.env.DEV ? lazy(() => import('./dev/Poster.tsx')) : null;
 
 /** ?p= の開発用の切り替えは、移動しても残す。 */
 function keepProfile(path: string): string {
@@ -47,6 +48,13 @@ export function App() {
   const goHome = useCallback(() => go('/'), [go]);
 
   const room = /^\/r\/([^/]+)\/?$/.exec(path);
+  if (Poster !== null && path === '/dev/poster') {
+    return (
+      <Suspense fallback={null}>
+        <Poster />
+      </Suspense>
+    );
+  }
   if (Og !== null && path === '/dev/og') {
     return (
       <Suspense fallback={null}>

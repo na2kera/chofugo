@@ -81,6 +81,8 @@ node packages/client/scripts/og.mjs http://localhost:19473 docs/mock/client
 
 タグは `index.html` にある。公開したあとで絵を差し替えるときは、表示先のキャッシュを避けるためにファイル名を変える。
 
+紹介ポスター（A4 横、QR コード付き）は、開発のときだけの画面 `/dev/poster?v=a`（`b`・`c`・`d`）を `node packages/client/scripts/poster.mjs http://localhost:19473 docs/poster` で PDF と PNG に撮ったもの。説明は `docs/poster/README.md`。
+
 タブのアイコン（`public/favicon.ico`・`favicon-32.png`・`apple-touch-icon.png`）は、ロゴの王冠のドット絵から書き出したもの。同じスクリプトが「ホーム画面に追加」用の `icon-192.png`・`icon-512.png`・`icon-512-maskable.png`（丸抜き用）も書き出し、`public/manifest.webmanifest` がそれを参照する。作り直すときは、リポジトリのルートで `node --experimental-strip-types packages/client/scripts/favicon.mjs`。
 
 ## テスト・型チェック・ビルド

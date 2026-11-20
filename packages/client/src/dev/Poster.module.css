@@ -1,0 +1,80 @@
+/* このルートだけ、印刷用紙以外の背景・高さ・余白をなくす。
+   mm を px に丸めない（印刷時の2ページ化を避ける）。 */
+:global(html:has([data-poster])),
+:global(body:has([data-poster])),
+:global(#root:has([data-poster])) {
+  margin: 0;
+  padding: 0;
+  width: 297mm;
+  height: 210mm;
+  min-height: 0;
+  background: none;
+}
+
+@page { size: A4 landscape; margin: 0; }
+
+.paper {
+  position: relative;
+  width: 297mm;
+  height: 210mm;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--cream);
+  font-family: 'DotGothic16', monospace;
+  font-size: 16px;
+  line-height: 24px;
+  image-rendering: pixelated;
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
+}
+/* 載せた対戦画面（.screen の中）には、ポスターの文字の決まりを及ぼさない。 */
+.paper p:not(.screen *), .paper h2:not(.screen *) { margin: 0; font-weight: 400; }
+.a, .b, .d { background-image: var(--bg-check); background-size: 8px 8px; }
+
+/* a: 左の装飾は 280×280 の整数2倍、右の QR は原寸。 */
+.title { position: absolute; left: 64px; top: 64px; width: 280px; transform: scale(2); transform-origin: top left; }
+.title > div { gap: 24px; }
+.titleCopy { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+.titleCopy p { font-size: 16px; line-height: 16px; white-space: nowrap; }
+/* a の特長は、下に1行で並べる（上に細い線）。左の飾りと右の QR は、上下の中央をそろえる。 */
+.features p { line-height: 16px; white-space: nowrap; }
+.a .features { position: absolute; left: 64px; top: 664px; width: 992px; padding-top: 30px; border-top: 2px solid var(--gold-lo); display: flex; justify-content: space-between; }
+.a .playLink { top: 176px; }
+
+/* QR: 174px + 左右上下24px（4点）= 222px。祖先も拡縮しない。 */
+.playLink { position: absolute; left: 768px; top: 304px; width: 282px; display: flex; flex-direction: column; align-items: flex-start; gap: 24px; color: inherit; text-decoration: none; }
+.qrLabel { width: 280px; text-align: center; font-size: 32px; line-height: 40px; white-space: nowrap; }
+.qr { width: 222px; height: 222px; margin-left: 30px; padding: 24px; background: var(--cream); flex: none; }
+.url { width: 280px; text-align: center; font-size: 16px; line-height: 24px; white-space: nowrap; }
+
+/* b: 56×80 の札を3倍。幅168、高さ240、上下48pxの段差。 */
+.logo { position: absolute; left: 64px; top: 64px; width: 176px; height: 88px; transform: scale(2); transform-origin: top left; }
+.headline { position: absolute; left: 480px; top: 144px; font-size: 32px; line-height: 40px; white-space: nowrap; }
+.hand { position: absolute; left: 64px; top: 320px; width: 216px; height: 96px; transform: scale(3); transform-origin: top left; }
+.hand > div { position: absolute; top: 16px; }
+.hand > :nth-child(1) { left: 0; }
+.hand > :nth-child(2) { left: 52px; top: 0; }
+.hand > :nth-child(3) { left: 104px; }
+.hand > :nth-child(4) { left: 160px; top: 0; }
+.invite { position: absolute; left: 64px; top: 680px; font-size: 32px; line-height: 40px; }
+.b .playLink { top: 392px; }
+
+/* c: クリーム地。既存 Logo の色だけ、このポスターの中で変更。 */
+.c { background: var(--cream); color: var(--ink); }
+.c .logo h1 { color: var(--ink); text-shadow: none; }
+.c .logo span { color: var(--gold-lo); }
+.c .headline { left: 64px; top: 288px; }
+.c::before { content: ''; position: absolute; left: 64px; top: 360px; width: 992px; height: 2px; background: var(--gold-lo); }
+.cards { position: absolute; left: 776px; top: 112px; display: flex; gap: 24px; }
+.cards > :nth-child(2) { margin-top: 32px; }
+.modes { position: absolute; left: 64px; top: 408px; display: grid; gap: 32px; }
+.modes h2 { font-size: 32px; line-height: 40px; color: var(--crimson); margin-bottom: 8px; }
+.modes p { font-size: 16px; line-height: 24px; }
+.c .playLink { top: 408px; }
+
+/* d: 左に対戦画面（390×800 を 0.75 倍。2px のドットが、倍率2の撮影で 3px にそろう）、右にロゴ・見出し・特長・QR。 */
+.screen { position: absolute; left: 72px; top: 96px; width: 390px; height: 800px; transform: scale(0.75); transform-origin: top left; outline: 4px solid var(--dim-line); line-height: 1; }
+.d .logo { left: 456px; top: 88px; }
+.d .headline { left: 424px; top: 296px; }
+.d .features { position: absolute; left: 424px; top: 496px; display: grid; gap: 16px; }
+.d .playLink { top: 384px; }

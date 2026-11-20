@@ -518,7 +518,8 @@ function peekedTarget(): StateMessage {
   });
 }
 
-function chofugoTurnScene(title: string, opts: Parameters<typeof abilityTurn>[0], extra: { panel?: AbilityPanel; steal?: CardId; skipOn?: boolean; line?: string; selected?: CardId[] } = {}): Scene {
+/** ポスター（dev/Poster.tsx）でも使う。 */
+export function chofugoTurnScene(title: string, opts: Parameters<typeof abilityTurn>[0], extra: { panel?: AbilityPanel; steal?: CardId; skipOn?: boolean; line?: string; selected?: CardId[] } = {}): Scene {
   return {
     title,
     render: () => {
