@@ -1,4 +1,4 @@
-// タブのアイコン（favicon）と、ホーム画面用のアイコンを書き出す。
+// タブのアイコン（favicon）と、ホーム画面用のアイコン（apple-touch-icon と、マニフェストが参照する icon-*.png）を書き出す。
 //   node --experimental-strip-types packages/client/scripts/favicon.mjs
 // 絵はロゴの王冠（src/pixel/patterns.ts の CROWN_GLYPH）をそのまま使い、点を整数倍に拡大するだけ（にじまない）。
 // 依存は足さない。PNG と ICO は Node の zlib だけで書く。
@@ -83,6 +83,11 @@ const out = (name, data) => {
   console.log(`${name} (${data.length} bytes)`);
 };
 // 王冠は 13×9 点。16px は1倍、32px は2倍、48px は3倍、180px は10倍（まわりに余白）。
+// マニフェスト用：192px は12倍、512px は32倍。丸抜き用（maskable）の 512px は24倍（312×216px）にして、
+// 王冠の四隅（中心から約 189.7px）が安全な円（半径 204.8px、幅の40%）に収まるようにする。
 out('favicon.ico', ico([{ size: 16, data: png(16, 1) }, { size: 32, data: png(32, 2) }, { size: 48, data: png(48, 3) }]));
 out('favicon-32.png', png(32, 2));
 out('apple-touch-icon.png', png(180, 10));
+out('icon-192.png', png(192, 12));
+out('icon-512.png', png(512, 32));
+out('icon-512-maskable.png', png(512, 24));

@@ -5,10 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#100d08" />
     <title>超富豪</title>
-    <!-- タブのアイコンとホーム画面用のアイコン（ロゴの王冠。scripts/favicon.mjs で書き出す）。 -->
+    <!-- タブのアイコンとホーム画面用のアイコン（ロゴの王冠。scripts/favicon.mjs で書き出す）。
+         マニフェストは「ホーム画面に追加」で開いたときの名前・アイコン・表示の仕方（サービスワーカーは入れていない）。 -->
     <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
     <!-- リンクを共有したときのプレビュー。招待リンク（/r/…）でも同じ HTML が返るので、og:url は書かない。
          画像は絶対 URL が要る。表示先がキャッシュするので、絵を差し替えるときはファイル名を変える。 -->
     <meta name="description" content="ブラウザで遊ぶ、4人対戦の大富豪。リンクを開けばそのまま参加できます。" />

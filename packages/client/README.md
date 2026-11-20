@@ -81,7 +81,7 @@ node packages/client/scripts/og.mjs http://localhost:19473 docs/mock/client
 
 タグは `index.html` にある。公開したあとで絵を差し替えるときは、表示先のキャッシュを避けるためにファイル名を変える。
 
-タブのアイコン（`public/favicon.ico`・`favicon-32.png`・`apple-touch-icon.png`）は、ロゴの王冠のドット絵から書き出したもの。作り直すときは、リポジトリのルートで `node --experimental-strip-types packages/client/scripts/favicon.mjs`。
+タブのアイコン（`public/favicon.ico`・`favicon-32.png`・`apple-touch-icon.png`）は、ロゴの王冠のドット絵から書き出したもの。同じスクリプトが「ホーム画面に追加」用の `icon-192.png`・`icon-512.png`・`icon-512-maskable.png`（丸抜き用）も書き出し、`public/manifest.webmanifest` がそれを参照する。作り直すときは、リポジトリのルートで `node --experimental-strip-types packages/client/scripts/favicon.mjs`。
 
 ## テスト・型チェック・ビルド
 
